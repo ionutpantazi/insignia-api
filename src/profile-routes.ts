@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { type Express, type RequestHandler } from "express";
 import { HttpError } from "./errors.js";
-import { type ProfileStore, type ProfileVersion, isPublicRadioUrl, prepareProfile, profilePageSize, profileValidators } from "./profiles.js";
+import { type ProfileStore, isPublicRadioUrl, prepareProfile, profilePageSize, validateProfile } from "./profiles.js";
 
+const collection = "/v5/me/settings-profiles";
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 function isProfileId(value: unknown): value is string {
@@ -14,17 +15,15 @@ function profileNotFound(): HttpError {
 }
 
 export function registerProfileRoutes(
-  app: Express, store: ProfileStore, version: ProfileVersion, authenticate: RequestHandler, requireJson: RequestHandler, parseJson: RequestHandler,
+  app: Express, store: ProfileStore, authenticate: RequestHandler, requireJson: RequestHandler, parseJson: RequestHandler,
 ) {
-  const collection = `/v${version}/me/settings-profiles`;
-  const validateProfile = profileValidators[version];
   app.get(collection, authenticate, async (req, res) => {
     const uid: string = res.locals.uid;
     const after = req.query.after;
     if (after !== undefined && !isProfileId(after)) {
       throw new HttpError(400, "INVALID_CURSOR", "The after cursor must be a profile ID from the list response.");
     }
-    const rows = await store.list(uid, after ?? "", version);
+    const rows = await store.list(uid, after ?? "");
     const profiles = rows.slice(0, profilePageSize);
     res.json({ profiles, nextCursor: rows[profilePageSize] ? rows[profilePageSize - 1]!.id : null });
   });
@@ -33,7 +32,7 @@ export function registerProfileRoutes(
     const uid: string = res.locals.uid;
     const { id } = req.params;
     if (!isProfileId(id)) throw profileNotFound();
-    const stored = await store.get(uid, id, version);
+    const stored = await store.get(uid, id);
     if (!stored) throw profileNotFound();
     if (!validateProfile(stored.payload)) throw new Error("Stored profile failed schema validation.");
     res.json({ ...stored.payload, id, updatedAt: stored.updatedAt });
@@ -49,7 +48,7 @@ export function registerProfileRoutes(
         res.status(422).json({
           error: {
             code: "VALIDATION_FAILED",
-            message: `The profile does not match schema version ${version}.`,
+            message: "The profile does not match schema version 5.",
             details: validateProfile.errors?.slice(0, 10).map((error) => ({
               path: error.instancePath || "/",
               keyword: error.keyword,

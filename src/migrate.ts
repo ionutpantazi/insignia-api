@@ -5,11 +5,9 @@ import { errorSummary } from "./errors.js";
 async function main() {
   const pool = createDatabasePool();
   try {
-    for (const migration of ["001-settings-backups.sql", "002-settings-profiles.sql"]) {
-      const sql = await readFile(new URL(`../migrations/${migration}`, import.meta.url), "utf8");
-      await pool.query(sql);
-      console.log(`Applied ${migration}.`);
-    }
+    const sql = await readFile(new URL("../migrations/002-settings-profiles.sql", import.meta.url), "utf8");
+    await pool.query(sql);
+    console.log("Settings profile table is ready.");
   } finally {
     await pool.end();
   }

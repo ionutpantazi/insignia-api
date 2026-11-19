@@ -1,20 +1,20 @@
 import { Ajv } from "ajv";
 import sharp from "sharp";
-import schemaV3 from "./schemas/settings-profile.v3.json" with { type: "json" };
-import schemaV4 from "./schemas/settings-profile.v4.json" with { type: "json" };
 import schemaV5 from "./schemas/settings-profile.v5.json" with { type: "json" };
-import { type Position } from "./backup.js";
 import { HttpError } from "./errors.js";
 
 type Image = { mediaType: "image/png" | "image/jpeg"; dataBase64: string };
+type Position = { x: number; y: number } | null;
 type SectionSize = { width: number; height: number } | null;
 
-export interface ProfileWriteV3 {
-  schemaVersion: 3;
+export interface ProfileWrite {
+  schemaVersion: 5;
   name: string;
   settings: {
     clock: { style: "digital" | "analog"; sizePercent: number };
-    positions: Record<"clock" | "shortcuts" | "actions" | "music", Position>;
+    positions: Record<"clock" | "shortcuts" | "actions", Position>;
+    sectionSizes: Record<"clock" | "shortcuts", SectionSize>;
+    musicLayouts: Record<"local" | "radio" | "spotify", { position: Position; size: SectionSize }>;
     showShortcuts: boolean;
     hideStatusBar: boolean;
     useSteeringWheelButtons: boolean;
@@ -32,27 +32,6 @@ export interface ProfileWriteV3 {
   };
 }
 
-export interface ProfileWriteV4 {
-  schemaVersion: 4;
-  name: string;
-  settings: ProfileWriteV3["settings"] & {
-    sectionSizes: Record<"clock" | "shortcuts" | "music", SectionSize>;
-  };
-}
-
-export interface ProfileWriteV5 {
-  schemaVersion: 5;
-  name: string;
-  settings: Omit<ProfileWriteV4["settings"], "positions" | "sectionSizes"> & {
-    positions: Omit<ProfileWriteV4["settings"]["positions"], "music">;
-    sectionSizes: Omit<ProfileWriteV4["settings"]["sectionSizes"], "music">;
-    musicLayouts: Record<"local" | "radio" | "spotify", { position: Position; size: SectionSize }>;
-  };
-}
-
-export type ProfileWrite = ProfileWriteV3 | ProfileWriteV4 | ProfileWriteV5;
-export type ProfileVersion = ProfileWrite["schemaVersion"];
-
 export interface ProfileSummary {
   id: string;
   name: string;
@@ -62,18 +41,14 @@ export interface ProfileSummary {
 export const profilePageSize = 50;
 
 export interface ProfileStore {
-  list(uid: string, after: string, version: ProfileVersion): Promise<ProfileSummary[]>;
-  get(uid: string, id: string, version: ProfileVersion): Promise<{ payload: unknown; updatedAt: string } | null>;
+  list(uid: string, after: string): Promise<ProfileSummary[]>;
+  get(uid: string, id: string): Promise<{ payload: unknown; updatedAt: string } | null>;
   create(uid: string, id: string, profile: ProfileWrite, updatedAt: Date): Promise<void>;
   overwrite(uid: string, id: string, profile: ProfileWrite, updatedAt: Date): Promise<boolean>;
 }
 
-const ajv = new Ajv({ allErrors: true, strict: true, ownProperties: true });
-export const profileValidators = {
-  3: ajv.compile<ProfileWriteV3>(schemaV3),
-  4: ajv.compile<ProfileWriteV4>(schemaV4),
-  5: ajv.compile<ProfileWriteV5>(schemaV5),
-};
+export const validateProfile = new Ajv({ allErrors: true, strict: true, ownProperties: true })
+  .compile<ProfileWrite>(schemaV5);
 
 export function isPublicRadioUrl(value: string): boolean {
   if (/[\s\\\x00-\x1f\x7f#]/.test(value)) return false;
@@ -100,7 +75,7 @@ export function isPublicRadioUrl(value: string): boolean {
 const maxImageBytes = 2 * 1024 * 1024;
 const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
-export async function prepareProfile<T extends ProfileWrite>(profile: T): Promise<T> {
+export async function prepareProfile(profile: ProfileWrite): Promise<ProfileWrite> {
   const background = profile.settings.background;
   if (background.type === "dark") return profile;
   const { mediaType, dataBase64 } = background.image;

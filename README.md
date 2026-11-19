@@ -1,229 +1,8 @@
 # Launcher settings backup API
 
 Self-hosted Node.js/TypeScript API using **Firebase Authentication** and **MySQL 8+**.
-This workspace was empty; this is a new API, not an integration with an existing server.
-No Android source was accessed or changed.
-
-## Contract
-
-For multiple named, complete Settings-page snapshots with portable wallpapers,
-see the [profiles API](./PROFILES.md). New layout snapshots use
-[v5](./PROFILES.md#per-player-music-layouts-v5) to store separate Local Music,
-Radio, and Spotify layouts. Existing v3/v4 profiles remain available through
-their original routes. The contract below describes the separate legacy
-v1/v2 single-backup resource.
-
-In v3, radio and Spotify `width` and `height` are all required: `0` means
-Automatic and positive integers are explicit sizes in dp. The API stores
-and returns `0` unchanged.
-
-Public base URL: `https://backup.example.com` (replace with your own domain).
-Every operation requires HTTPS and `Authorization: Bearer <Firebase ID token>`.
-
-| Operation | Request | Success |
-| --- | --- | --- |
-| Save/replace my latest backup | `PUT /v2/me/settings-backup` | `204 No Content` |
-| Retrieve my latest backup | `GET /v2/me/settings-backup` | `200` with the envelope below |
-
-There is exactly one latest backup per Firebase UID, not per device. The UID comes
-only from a verified Firebase ID token, never from a path, query parameter, or body.
-There are no routes to list users or access someone else's backup. SQL statements
-are parameterized, and the primary key uses exact UID bytes, not a case-insensitive
-collation. One deployment/database belongs to one Firebase project.
-
-A successful PUT atomically replaces that account's previous backup in MySQL.
-Concurrent successful saves use last-database-write-wins; there is no history,
-merge, or background sync. A response timeout can occur after a save committed:
-report an uncertain result, not success; the same full PUT may safely be retried.
-
-### Version compatibility
-
-The Android contract below is **v2**. The unchanged
-[v1 schema](src/schemas/settings-backup.v1.json) remains available through
-`PUT /v1/me/settings-backup` and `GET /v1/me/settings-backup`.
-Each PUT accepts only its endpoint's schema version; using the other version or
-just relabeling a v1 payload as v2 returns 422.
-
-There is still **one latest backup per account**, not one per schema version.
-If the stored backup is valid but belongs to the other version, GET returns
-**409 `BACKUP_VERSION_MISMATCH`**, without returning converted preferences.
-For example, GET v2 when only a v1 backup exists does not return 404, reinterpret
-normalized positions as dp, or map legacy clock presets into percentages.
-GET v1 still returns that original v1 backup unchanged.
-
-A successful explicit v2 PUT replaces the previous backup, including a v1 backup;
-the reverse is also true for an explicit valid v1 PUT. Warn the user before replacing
-a backup made by another app version/device. No automatic migration or fallback is
-performed. Existing database rows and the table layout require no migration for v2.
-
-### Save example
-
-```http
-PUT /v2/me/settings-backup HTTP/1.1
-Host: backup.example.com
-Authorization: Bearer <Firebase ID token>
-Content-Type: application/json
-
-{
-  "schemaVersion": 2,
-  "preferences": {
-    "clock": {
-      "style": "digital",
-      "sizePercent": 125
-    },
-    "positions": {
-      "clock": { "x": 24, "y": 80 },
-      "shortcuts": { "x": 24, "y": 240 },
-      "actions": null,
-      "music": { "x": 24, "y": 400 }
-    },
-    "showShortcuts": true,
-    "musicPlayer": "local"
-  }
-}
-```
-
-```http
-HTTP/1.1 204 No Content
-Cache-Control: no-store
-```
-
-PUT has no response body. Do not attempt to decode one.
-
-### Retrieve example
-
-```http
-GET /v2/me/settings-backup HTTP/1.1
-Host: backup.example.com
-Authorization: Bearer <Firebase ID token>
-```
-
-```http
-HTTP/1.1 200 OK
-Content-Type: application/json; charset=utf-8
-Cache-Control: no-store
-
-{
-  "backup": {
-    "schemaVersion": 2,
-    "preferences": {
-      "clock": {
-        "style": "digital",
-        "sizePercent": 125
-      },
-      "positions": {
-        "clock": { "x": 24, "y": 80 },
-        "shortcuts": { "x": 24, "y": 240 },
-        "actions": null,
-        "music": { "x": 24, "y": 400 }
-      },
-      "showShortcuts": true,
-      "musicPlayer": "local"
-    }
-  },
-  "updatedAt": "2026-11-19T16:00:00.000Z"
-}
-```
-
-`updatedAt` is server-generated UTC metadata, not client time or a playback timestamp.
-
-### Payload semantics and validation
-
-The authoritative, reusable payload schema is
-[settings-backup.v2.json](src/schemas/settings-backup.v2.json).
-The Android adapter should explicitly map its local settings to/from these fields;
-these names are a proposed wire contract, not claims about existing SharedPreferences keys.
-
-- Both the route (`v2`) and payload (`schemaVersion: 2`) are versioned.
-  Unsupported payload versions are rejected, not silently migrated or downgraded.
-  Breaking changes require an explicit new contract/migration.
-- All fields shown in the request are required. Only a position may be `null`;
-  omitting a position is invalid and is not the same as automatic placement.
-- Clock style: `digital | analog`; `sizePercent` is an integer from **50 through 200**
-  inclusive, relative to the launcher's base clock size. There are no separate
-  hour-cycle, seconds, or clock-visibility preferences in v2; those fields are
-  not in its allowlist and must not be sent.
-- `positions` includes **clock, shortcuts, actions, and music**. Each value is
-  either `null` for automatic placement or an object with required `x` and `y`,
-  both nonnegative integer **dp** offsets. They are measured from the **top-left
-  of usable Home content to the top-left of the section**, not screen pixels,
-  normalized fractions, center anchors, or coordinates including system insets.
-  `(0,0)` is a valid manual position, not automatic placement.
-  Preserve positions even when a section is hidden; changing visibility/player
-  mode must not clear, reset, or normalize them. Overlap is permitted.
-  On different-size displays Android may clamp rendered bounds to the usable area,
-  but must retain the saved dp position rather than rewriting the backup.
-- `showShortcuts` is a boolean controlling shortcuts visibility only.
-- `musicPlayer`: `none | local | spotify | radio`. **`none` hides the music box**,
-  without clearing `positions.music`. Other values choose a UI/player mode only;
-  it does not sign in, assign a station, grant file access, or start playback.
-  If a service is unavailable, retain the selection and show a local setup/unavailable
-  state without importing credentials or silently changing the backup.
-- Unknown fields are rejected at **every** object level. No type coercion, stripping,
-  implicit defaults, partial patches, or generic SharedPreferences upload.
-- Maximum request body: **16,384 UTF-8 bytes**, uncompressed `application/json`.
-  Invalid JSON (including non-finite numeric literals) is not accepted.
-
-**Never include:** wallpaper images or paths/URIs, local music folders or file URIs,
-music files, shortcut app/package/intent assignments, passwords, Firebase/Spotify
-tokens, media service or radio URLs, station assignments, playback state, queues,
-volume, Android permissions, device identifiers, or default-Home registration.
-The visibility and position of the shortcuts *section* are portable; its shortcut
-assignments are not. Custom wallpaper and all other non-allowlisted preferences
-remain device-local and unchanged on restore.
-
-### Errors
-
-Error body:
-
-```json
-{
-  "error": {
-    "code": "VALIDATION_FAILED",
-    "message": "The backup does not match schema version 2.",
-    "details": [
-      {
-        "path": "/preferences/musicPlayer",
-        "keyword": "enum",
-        "message": "must be equal to one of the allowed values"
-      }
-    ]
-  }
-}
-```
-
-`details` is present only for schema errors, with at most ten entries; `path` uses
-JSON Pointer (`/` denotes the root in these errors). Treat messages as diagnostic,
-not stable localized UI strings; branch on status and `error.code`.
-
-| HTTP | Code | Meaning / client action |
-| --- | --- | --- |
-| 400 | `INVALID_JSON` | Malformed JSON or non-object JSON primitive. Fix serialization. |
-| 400 | `INVALID_REQUEST` | Incomplete request body. Allow a manual retry. |
-| 401 | `UNAUTHENTICATED` | Missing, invalid, expired, revoked, disabled-user, or wrong-project token. Refresh once or prompt sign-in. |
-| 404 | `NO_BACKUP` | This signed-in account has never saved a backup. Show "No backup found"; change nothing locally. |
-| 404 | `NOT_FOUND` | Unknown route. |
-| 409 | `BACKUP_VERSION_MISMATCH` | The latest backup belongs to the other supported schema version. Do not relabel or apply it as this version. |
-| 413 | `PAYLOAD_TOO_LARGE` | Body exceeds 16,384 bytes. Fix serialization; do not silently truncate. |
-| 415 | `UNSUPPORTED_MEDIA_TYPE` | Use uncompressed UTF-8 `application/json`. |
-| 422 | `VALIDATION_FAILED` | Invalid/missing/extra fields or unsupported `schemaVersion`. Do not apply a partial backup. |
-| 500 | `INTERNAL_ERROR` | Storage/server failure. No successful result is asserted. |
-| 503 | `AUTH_UNAVAILABLE` | Token verification infrastructure failed. Retry later, do not erase local data. |
-
-For example, GET before the first backup returns **404**, never empty preferences:
-
-```json
-{
-  "error": {
-    "code": "NO_BACKUP",
-    "message": "No settings backup exists for this account."
-  }
-}
-```
-
-401 responses include `WWW-Authenticate: Bearer realm="settings-backup"`.
-All application responses use `Cache-Control: no-store`. Proxies/network failures
-may return non-JSON, HTML, or no response: treat any unexpected status/body as failure.
+The [v5 profiles API](./PROFILES.md) is the only supported API. Versions 1–4
+are retired; existing database records are not deleted or migrated.
 
 ## Authentication
 
@@ -264,39 +43,39 @@ Never disable TLS verification or log Authorization headers/tokens.
 ## Android integration handoff (no Android changes made)
 
 Home launch, process recreation and wake must render exclusively from local
-SharedPreferences/device assets and RAM caches. **Neither endpoint is called on
+SharedPreferences/device assets and RAM caches. **No profile endpoint is called on
 launch/wake**, for rendering, by a timer, or when ordinary settings change.
 Firebase token refresh is separate from backup; it must never gate Home.
 
 ### Back up settings button
 
-1. Require an authenticated, recoverable account; explain that this replaces its
-   previous cloud backup, including a backup made on another head unit.
+1. Require an authenticated, recoverable account. Let the user create a profile
+   or explicitly choose a profile to overwrite.
 2. Read a consistent snapshot from the app's settings owner. Serialize only the
    schema's allowlisted portable fields; never enumerate all SharedPreferences.
-3. Validate locally, then perform authenticated PUT off the main thread.
+3. Validate locally, then perform authenticated POST or PUT off the main thread.
    Configure finite network timeouts and prevent duplicate button actions.
-4. Show success only after 204. A failure changes nothing locally. A timeout may
-   mean the remote save committed; offer manual retry rather than claiming success.
+4. Show success only after `201` for create or `200` for overwrite. A failure
+   changes nothing locally. Refresh the picker after a timeout before retrying.
 
 ### Restore settings button
 
 1. On explicit action only, sign in if necessary and GET. Download to a candidate
-   object, with a bounded response size (for example 32 KiB including the envelope),
+   object, with a bounded response size (3 MiB including the wallpaper and metadata),
    without touching preferences, rendered state, or RAM caches.
 2. Require 200, the expected envelope, supported schema version, and complete local
    validation (types, enums, finite coordinates, ranges, forbidden/unknown fields).
    Do not substitute defaults on validation failure.
 3. Ask the user before replacing their portable preferences, with the backup time
-   and account shown. Cancellation, 404, 409 version mismatch, offline/network/auth
+   and account shown. Cancellation, 404, offline/network/auth
    failures, malformed JSON or unsupported versions must leave **all local settings
    and caches unchanged**.
 4. Serialize the apply step through the same settings owner/lock used by normal
    edits. Capture current portable values immediately before applying. Merge **only**
    the allowlisted keys into the current local snapshot; never call
    `SharedPreferences.Editor.clear()` or replace a full stale settings map. Preserve
-   current wallpaper, file grants, shortcut assignments, service URLs, credentials,
-   and every other local-only setting.
+   file grants, shortcut assignments, credentials, and every other local-only
+   setting. Stage any restored wallpaper before applying the profile.
 5. Commit all changed portable keys in one editor operation off the main thread.
    Do not use fire-and-forget `apply()` as proof of successful persistence.
    **Important:** SharedPreferences `commit()` updates its in-process map before
@@ -332,8 +111,8 @@ are included. A separate Firebase-backed document database is **not** required.
    are still validated before startup.
 3. Create the MySQL database and dedicated accounts using an administrator.
    Run `npm run migrate` with a migration account authorized to CREATE the table;
-   the repeatable migrations create `settings_backups` and `settings_profiles`.
-   The runtime account needs only SELECT, INSERT and UPDATE on those tables; no
+   the repeatable migration creates `settings_profiles`.
+   The runtime account needs only SELECT, INSERT and UPDATE on that table; no
    administrative, DROP, CREATE or other application-table privileges.
 4. Run `npm run build`, then `npm start` under a supervised service.
    The server checks table accessibility before listening and binds to
@@ -355,7 +134,7 @@ are included. A separate Firebase-backed document database is **not** required.
    database, optionally specifying `MYSQL_SSL_CA_FILE`. Certificate verification
    stays enabled. Keep MySQL durable InnoDB commit settings (notably
    `innodb_flush_log_at_trx_commit=1`) and operate database backups independently
-   from this application's one-latest-backup-per-user feature.
+   from this application's profile feature.
 
 At the proxy enforce request/time/rate limits appropriate to your deployment and
 do not cache API responses or log request bodies/Authorization. The application
@@ -376,10 +155,11 @@ HTTP tests use a fake token verifier and memory store; they do not prove live
 Firebase/MySQL connectivity. The opt-in MySQL test requires a **dedicated database
 ending in `_test`** and permission to create the table and delete its own test rows.
 Supply its MYSQL_* environment variables, set `MYSQL_INTEGRATION_TEST=true`,
-then run `npm test`. It verifies upsert/readback across independent connections
-and case/trailing-space-sensitive account isolation. It is skipped otherwise.
+then run `npm test`. It verifies v5 read/write, UID isolation, and protection
+of stored legacy profiles. It is skipped otherwise.
 
 Before deploying, run that MySQL test and a live Firebase smoke test with two
-different users: A saves, B gets NO_BACKUP, B saves, A's backup is unchanged.
+different users: A creates a profile, B gets `404 PROFILE_NOT_FOUND` for A's
+profile ID, and B creating a profile leaves A's profile unchanged.
 Also test expired/revoked/wrong-project tokens and HTTPS reachability. Never use
 real user tokens in committed examples or test fixtures.

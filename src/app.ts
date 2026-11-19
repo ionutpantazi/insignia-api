@@ -1,11 +1,9 @@
 import express, { type ErrorRequestHandler, type RequestHandler } from "express";
-import { type BackupStore, backupValidators, validateBackup } from "./backup.js";
 import { errorCode, errorSummary, HttpError } from "./errors.js";
 import { registerProfileRoutes } from "./profile-routes.js";
 import { type ProfileStore } from "./profiles.js";
 
 export interface AppDependencies {
-  store: BackupStore;
   profiles: ProfileStore;
   verifyIdToken(token: string): Promise<{ uid: string }>;
   logger: Pick<Console, "error">;
@@ -20,7 +18,7 @@ const invalidCredentialCodes = new Set([
   "auth/user-not-found",
 ]);
 
-export function createApp({ store, profiles, verifyIdToken, logger }: AppDependencies) {
+export function createApp({ profiles, verifyIdToken, logger }: AppDependencies) {
   const app = express();
   app.disable("x-powered-by");
   app.disable("etag");
@@ -60,60 +58,7 @@ export function createApp({ store, profiles, verifyIdToken, logger }: AppDepende
     next();
   };
 
-  for (const version of [1, 2] as const) {
-    const path = `/v${version}/me/settings-backup`;
-    const validate = backupValidators[version];
-    app.put(
-      path,
-      authenticate,
-      requireJson,
-      parseJson(16 * 1024),
-      async (req, res) => {
-        const body: unknown = req.body;
-        if (!validate(body)) {
-          res.status(422).json({
-            error: {
-              code: "VALIDATION_FAILED",
-              message: `The backup does not match schema version ${version}.`,
-              details: validate.errors?.slice(0, 10).map((error) => ({
-                path: error.instancePath || "/",
-                keyword: error.keyword,
-                message: error.message,
-              })),
-            },
-          });
-          return;
-        }
-        const uid: string = res.locals.uid;
-        await store.save(uid, body);
-        res.status(204).end();
-      },
-    );
-
-    app.get(path, authenticate, async (_req, res) => {
-      const uid: string = res.locals.uid;
-      const stored = await store.get(uid);
-      if (!stored) {
-        throw new HttpError(404, "NO_BACKUP", "No settings backup exists for this account.");
-      }
-      if (!validateBackup(stored.backup)) {
-        throw new Error("Stored backup failed schema validation.");
-      }
-      if (stored.backup.schemaVersion !== version) {
-        throw new HttpError(
-          409,
-          "BACKUP_VERSION_MISMATCH",
-          `The latest backup uses schema version ${stored.backup.schemaVersion}; this endpoint requires version ${version}.`,
-        );
-      }
-      res.json(stored);
-    });
-  }
-
-  const parseProfile = parseJson(3 * 1024 * 1024);
-  for (const version of [3, 4, 5] as const) {
-    registerProfileRoutes(app, profiles, version, authenticate, requireJson, parseProfile);
-  }
+  registerProfileRoutes(app, profiles, authenticate, requireJson, parseJson(3 * 1024 * 1024));
 
   app.use((_req, _res, next) => {
     next(new HttpError(404, "NOT_FOUND", "This API route does not exist."));

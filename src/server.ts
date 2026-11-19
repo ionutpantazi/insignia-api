@@ -3,7 +3,6 @@ import { getAuth } from "firebase-admin/auth";
 import { createApp } from "./app.js";
 import { createDatabasePool, portFromEnv, requiredEnv } from "./config.js";
 import { ConfigurationError, errorSummary } from "./errors.js";
-import { MysqlBackupStore } from "./mysql-store.js";
 import { MysqlProfileStore } from "./mysql-profile-store.js";
 
 async function main() {
@@ -19,14 +18,12 @@ async function main() {
   const auth = getAuth(firebase);
   const pool = createDatabasePool();
   try {
-    await pool.query("SELECT firebase_uid FROM settings_backups LIMIT 0");
     await pool.query("SELECT firebase_uid FROM settings_profiles LIMIT 0");
   } catch (error) {
     await pool.end();
     throw error;
   }
   const app = createApp({
-    store: new MysqlBackupStore(pool),
     profiles: new MysqlProfileStore(pool),
     verifyIdToken: (token) => auth.verifyIdToken(token, true),
     logger: console,
