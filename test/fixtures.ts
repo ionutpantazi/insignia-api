@@ -1,5 +1,5 @@
 import { type BackupV1, type BackupV2 } from "../src/backup.js";
-import { type ProfileWrite } from "../src/profiles.js";
+import { type ProfileWriteV3, type ProfileWriteV4 } from "../src/profiles.js";
 
 export function exampleBackup(): BackupV1 {
   return {
@@ -33,7 +33,7 @@ export function exampleBackupV2(): BackupV2 {
   };
 }
 
-export function exampleProfile(name = "Daily drive"): ProfileWrite {
+export function exampleProfile(name = "Daily drive"): ProfileWriteV3 {
   return {
     schemaVersion: 3,
     name,
@@ -54,6 +54,18 @@ export function exampleProfile(name = "Daily drive"): ProfileWrite {
         maxTitleLines: 2,
       },
       background: { type: "dark" },
+    },
+  };
+}
+
+export function exampleProfileV4(): ProfileWriteV4 {
+  const { name, settings } = exampleProfile("Layout editor");
+  return {
+    schemaVersion: 4,
+    name,
+    settings: {
+      ...settings,
+      sectionSizes: { clock: null, shortcuts: { width: 320, height: 120 }, music: { width: 380, height: 140 } },
     },
   };
 }

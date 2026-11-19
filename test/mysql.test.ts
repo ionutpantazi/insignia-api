@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { createDatabasePool } from "../src/config.js";
 import { MysqlBackupStore } from "../src/mysql-store.js";
 import { MysqlProfileStore } from "../src/mysql-profile-store.js";
-import { exampleBackup, exampleBackupV2, exampleProfile } from "./fixtures.js";
+import { exampleBackup, exampleBackupV2, exampleProfile, exampleProfileV4 } from "./fixtures.js";
 
 const skip = process.env.MYSQL_INTEGRATION_TEST !== "true" && "Set MYSQL_INTEGRATION_TEST=true with a dedicated *_test database.";
 
@@ -59,6 +59,7 @@ test("MySQL stores profiles separately and overwrites only the matching UID and 
   const otherUid = uid.toUpperCase();
   const firstId = randomUUID();
   const secondId = randomUUID();
+  const layoutId = randomUUID();
   try {
     for (const migration of ["001-settings-backups.sql", "002-settings-profiles.sql"]) {
       await pool.query(await readFile(new URL(`../migrations/${migration}`, import.meta.url), "utf8"));
@@ -78,17 +79,24 @@ test("MySQL stores profiles separately and overwrites only the matching UID and 
     await backups.save(uid, v2);
     await profiles.create(uid, firstId, first, time);
     await profiles.create(uid, secondId, second, time);
-    assert.deepEqual(await profiles.list(uid, ""), [
+    const layout = exampleProfileV4();
+    await profiles.create(uid, layoutId, layout, time);
+    assert.deepEqual(await profiles.list(uid, "", 3), [
       { id: firstId, name: first.name, updatedAt: time.toISOString() },
       { id: secondId, name: second.name, updatedAt: time.toISOString() },
     ].sort((a, b) => a.id.localeCompare(b.id)));
-    assert.deepEqual(await profiles.list(otherUid, ""), []);
-    assert.equal(await profiles.get(otherUid, firstId), null);
+    assert.deepEqual(await profiles.list(uid, "", 4), [{ id: layoutId, name: layout.name, updatedAt: time.toISOString() }]);
+    assert.deepEqual(await profiles.list(otherUid, "", 3), []);
+    assert.equal(await profiles.get(otherUid, firstId, 3), null);
+    assert.equal(await profiles.get(uid, firstId, 4), null);
+    assert.equal(await profiles.overwrite(uid, firstId, layout, later), false);
+    assert.equal(await profiles.overwrite(uid, layoutId, changed, later), false);
     assert.equal(await profiles.overwrite(otherUid, firstId, changed, later), false);
-    assert.deepEqual(await profiles.get(uid, firstId), { payload: first, updatedAt: time.toISOString() });
+    assert.deepEqual(await profiles.get(uid, firstId, 3), { payload: first, updatedAt: time.toISOString() });
     assert.equal(await profiles.overwrite(uid, firstId, changed, later), true);
-    assert.deepEqual(await profiles.get(uid, firstId), { payload: changed, updatedAt: later.toISOString() });
-    assert.deepEqual(await profiles.get(uid, secondId), { payload: second, updatedAt: time.toISOString() });
+    assert.deepEqual(await profiles.get(uid, firstId, 3), { payload: changed, updatedAt: later.toISOString() });
+    assert.deepEqual(await profiles.get(uid, secondId, 3), { payload: second, updatedAt: time.toISOString() });
+    assert.deepEqual(await profiles.get(uid, layoutId, 4), { payload: layout, updatedAt: time.toISOString() });
     assert.deepEqual((await backups.get(uid))?.backup, v2);
   } finally {
     try {

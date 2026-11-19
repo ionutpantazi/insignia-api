@@ -110,7 +110,10 @@ export function createApp({ store, profiles, verifyIdToken, logger }: AppDepende
     });
   }
 
-  registerProfileRoutes(app, profiles, authenticate, requireJson, parseJson(3 * 1024 * 1024));
+  const parseProfile = parseJson(3 * 1024 * 1024);
+  for (const version of [3, 4] as const) {
+    registerProfileRoutes(app, profiles, version, authenticate, requireJson, parseProfile);
+  }
 
   app.use((_req, _res, next) => {
     next(new HttpError(404, "NOT_FOUND", "This API route does not exist."));

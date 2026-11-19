@@ -4,8 +4,8 @@ import { after, before, beforeEach, test } from "node:test";
 import sharp from "sharp";
 import { createApp } from "../src/app.js";
 import { type Backup, type BackupStore, type StoredBackup } from "../src/backup.js";
-import { type ProfileStore, type ProfileWrite, profilePageSize } from "../src/profiles.js";
-import { exampleBackup, exampleBackupV2, exampleProfile } from "./fixtures.js";
+import { type ProfileStore, type ProfileVersion, type ProfileWrite, profilePageSize } from "../src/profiles.js";
+import { exampleBackup, exampleBackupV2, exampleProfile, exampleProfileV4 } from "./fixtures.js";
 
 class MemoryStore implements BackupStore {
   readonly backups = new Map<string, StoredBackup>();
@@ -28,15 +28,16 @@ class MemoryStore implements BackupStore {
 const store = new MemoryStore();
 const profileRows = new Map<string, Map<string, { payload: ProfileWrite; updatedAt: string }>>();
 const profiles: ProfileStore = {
-  async list(uid, after) {
+  async list(uid, after, version) {
     return [...(profileRows.get(uid) ?? [])]
-      .filter(([id]) => id > after)
+      .filter(([id, row]) => id > after && row.payload.schemaVersion === version)
       .sort(([a], [b]) => a.localeCompare(b))
       .slice(0, profilePageSize + 1)
       .map(([id, row]) => ({ id, name: row.payload.name, updatedAt: row.updatedAt }));
   },
-  async get(uid, id) {
-    return profileRows.get(uid)?.get(id) ?? null;
+  async get(uid, id, version) {
+    const row = profileRows.get(uid)?.get(id);
+    return row?.payload.schemaVersion === version ? row : null;
   },
   async create(uid, id, payload, updatedAt) {
     const rows = profileRows.get(uid) ?? new Map();
@@ -45,7 +46,7 @@ const profiles: ProfileStore = {
   },
   async overwrite(uid, id, payload, updatedAt) {
     const rows = profileRows.get(uid);
-    if (!rows?.has(id)) return false;
+    if (rows?.get(id)?.payload.schemaVersion !== payload.schemaVersion) return false;
     rows.set(id, { payload, updatedAt: updatedAt.toISOString() });
     return true;
   },
@@ -493,8 +494,8 @@ test("v1 and v2 are never relabeled or converted and only an explicit valid PUT 
   assert.equal(store.backups.size, 1);
 });
 
-function profileRequest(method: "GET" | "POST" | "PUT", suffix = "", body?: unknown, token = "user-a-token") {
-  return fetch(baseUrl.replace("/v1/me/settings-backup", "/v3/me/settings-profiles") + suffix, {
+function profileRequest(method: "GET" | "POST" | "PUT", suffix = "", body?: unknown, token = "user-a-token", version: ProfileVersion = 3) {
+  return fetch(baseUrl.replace("/v1/me/settings-backup", `/v${version}/me/settings-profiles`) + suffix, {
     method,
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -505,14 +506,72 @@ function profileRequest(method: "GET" | "POST" | "PUT", suffix = "", body?: unkn
 }
 
 async function createProfile(payload: ProfileWrite) {
-  const response = await profileRequest("POST", "", payload);
+  const response = await profileRequest("POST", "", payload, undefined, payload.schemaVersion);
   assert.equal(response.status, 201);
   const summary = await response.json();
-  assert.equal(response.headers.get("location"), `/v3/me/settings-profiles/${summary.id}`);
+  assert.equal(response.headers.get("location"), `/v${payload.schemaVersion}/me/settings-profiles/${summary.id}`);
   assert.equal(summary.name, payload.name);
   assert.equal(new Date(summary.updatedAt).toISOString(), summary.updatedAt);
   return summary;
 }
+
+test("v4 round-trips section sizes and positions without resizing hidden or overlapping sections", async () => {
+  const profile = exampleProfileV4();
+  profile.settings.radio.width = 0;
+  profile.settings.positions.shortcuts = profile.settings.positions.music = { x: 24, y: 80 };
+  const summary = await createProfile(profile);
+  const path = `/${summary.id}`;
+  const load = await profileRequest("GET", path, undefined, undefined, 4);
+  assert.equal(load.status, 200);
+  assert.deepEqual(await load.json(), { ...profile, ...summary });
+  profile.settings.sectionSizes = { clock: { width: 1, height: 2147483647 }, shortcuts: null, music: null };
+  const overwritten = await profileRequest("PUT", path, profile, undefined, 4);
+  assert.equal(overwritten.status, 200);
+  const updated = await overwritten.json();
+  assert.equal(updated.id, summary.id);
+  assert.deepEqual(await (await profileRequest("GET", path, undefined, undefined, 4)).json(), { ...profile, ...updated });
+});
+
+test("v4 requires all three size entries and rejects non-positive, fractional, or incomplete overrides", async () => {
+  const profile = exampleProfileV4();
+  const validSizes = profile.settings.sectionSizes;
+  for (const sectionSizes of [
+    undefined, null, { ...validSizes, actions: null },
+    { ...validSizes, clock: undefined },
+    { ...validSizes, shortcuts: undefined },
+    { ...validSizes, music: undefined },
+    { ...validSizes, clock: { width: 0, height: 1 } },
+    { ...validSizes, shortcuts: { width: 1, height: -1 } },
+    { ...validSizes, music: { width: 1.5, height: 1 } },
+    { ...validSizes, music: { width: 2147483648, height: 1 } },
+    { ...validSizes, music: { width: 1 } },
+  ]) {
+    const response = await profileRequest("POST", "", { ...profile, settings: { ...profile.settings, sectionSizes } }, undefined, 4);
+    assert.equal(response.status, 422);
+    assert.equal((await response.json()).error.code, "VALIDATION_FAILED");
+  }
+});
+
+test("v4 is scoped to the verified account and cannot read or overwrite v3 snapshots", async () => {
+  const png = await sharp({ create: { width: 1, height: 1, channels: 3, background: "blue" } }).png().toBuffer();
+  const legacy = exampleProfile();
+  legacy.settings.background = { type: "custom", image: { mediaType: "image/png", dataBase64: png.toString("base64") } };
+  const legacySummary = await createProfile(legacy);
+  const legacyPath = `/${legacySummary.id}`;
+  const before = await (await profileRequest("GET", legacyPath)).json();
+  const layout = exampleProfileV4();
+  const layoutSummary = await createProfile(layout);
+  const layoutPath = `/${layoutSummary.id}`;
+  assert.deepEqual(await (await profileRequest("GET", "", undefined, undefined, 4)).json(), { profiles: [layoutSummary], nextCursor: null });
+  assert.deepEqual(await (await profileRequest("GET")).json(), { profiles: [legacySummary], nextCursor: null });
+  assert.equal((await profileRequest("GET", legacyPath, undefined, undefined, 4)).status, 404);
+  assert.equal((await profileRequest("PUT", legacyPath, layout, undefined, 4)).status, 404);
+  assert.equal((await profileRequest("PUT", layoutPath, legacy)).status, 404);
+  assert.equal((await profileRequest("POST", "", legacy, undefined, 4)).status, 422);
+  assert.equal((await profileRequest("GET", layoutPath, undefined, "user-b-token", 4)).status, 404);
+  assert.equal((await profileRequest("PUT", layoutPath, layout, "user-b-token", 4)).status, 404);
+  assert.deepEqual(await (await profileRequest("GET", legacyPath)).json(), before);
+});
 
 test("v3 creates two named snapshots, lists metadata only, and overwrites just the selected stable ID", async () => {
   const first = exampleProfile();

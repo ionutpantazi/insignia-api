@@ -7,8 +7,9 @@ No Android source was accessed or changed.
 ## Contract
 
 For multiple named, complete Settings-page snapshots with portable wallpapers,
-see the [v3 profiles API](./PROFILES.md). The contract below describes the separate
-legacy v1/v2 single-backup resource; v3 does not read or migrate those backups.
+see the [profiles API](./PROFILES.md). The visual layout editor uses v4, which
+adds exact section footprints without changing v3 profiles. The contract below
+describes the separate legacy v1/v2 single-backup resource.
 
 In v3, radio and Spotify `width` and `height` are all required: `0` means
 Automatic and positive integers are explicit sizes in dp. The API stores

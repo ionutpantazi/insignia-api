@@ -1,11 +1,98 @@
-# Android settings profiles API (v3)
+# Android settings profiles API
+
+## Visual layout editor (v4)
+
+Use the [v4 JSON Schema](./src/schemas/settings-profile.v4.json). The v4 endpoints
+use the Firebase authentication, response shapes, pagination, and wallpaper
+transfer documented below, with `schemaVersion: 4` in the write body.
+
+| Method and path | Success |
+| --- | --- |
+| `POST /v4/me/settings-profiles` | `201 Created`, profile summary and `Location` |
+| `GET /v4/me/settings-profiles` | `200 OK`, list of v4 summaries |
+| `GET /v4/me/settings-profiles/{id}` | `200 OK`, full v4 snapshot |
+| `PUT /v4/me/settings-profiles/{id}` | `200 OK`, updated v4 summary |
+
+`settings.positions` is unchanged. `settings.sectionSizes` is required and must
+contain `clock`, `shortcuts`, and `music` (not `actions`). Each entry must be
+`null` for automatic sizing or an object with both `width` and `height`, positive
+integer dp values up to `2147483647`. A non-null entry overrides the section's
+automatic footprint. When `clock` is `null`, use the existing clock scale.
+When `music` is `null`, use the selected radio or Spotify dimensions when
+applicable; `0` still means Automatic for those legacy dimensions. For a null
+shortcuts size, use the launcher's automatic shortcuts layout.
+
+The API keeps the exact sizes and positions, even for hidden sections. Only
+Android fits the layout to the screen and prevents overlap. The API does not
+clamp or rearrange the layout.
+
+V3 profiles stay on the v3 endpoints with their original settings and wallpaper.
+The v4 picker lists only v4 profiles; accessing an ID through the wrong version
+returns `404 PROFILE_NOT_FOUND`. There is no conversion or database migration.
+
+### Example v4 save and load
+
+`POST /v4/me/settings-profiles` with `Content-Type: application/json`
+(send the same full body for PUT):
+
+```json
+{
+  "schemaVersion": 4,
+  "name": "Layout editor",
+  "settings": {
+    "clock": { "style": "digital", "sizePercent": 65 },
+    "positions": { "clock": { "x": 24, "y": 80 }, "shortcuts": null, "actions": null, "music": null },
+    "sectionSizes": { "clock": null, "shortcuts": { "width": 320, "height": 120 }, "music": null },
+    "showShortcuts": false,
+    "hideStatusBar": false,
+    "useSteeringWheelButtons": true,
+    "musicMode": "radio",
+    "radio": { "serverUrl": "https://radio.example.com/stream", "autoplay": false, "width": 0, "height": 120 },
+    "spotify": { "clientId": null, "playbackUri": null, "autoConnect": false, "width": 0, "height": 0, "maxTitleLines": 2 },
+    "background": { "type": "dark" }
+  }
+}
+```
+
+The create response includes `Location: /v4/me/settings-profiles/86df72d0-26ad-41d7-904a-c17139126234`
+and the summary:
+
+```json
+{ "id": "86df72d0-26ad-41d7-904a-c17139126234", "name": "Layout editor", "updatedAt": "2026-11-19T18:55:00.123Z" }
+```
+
+`GET` the profile URL with no request body. The `200 OK` body contains the
+complete snapshot and server metadata:
+
+```json
+{
+  "id": "86df72d0-26ad-41d7-904a-c17139126234",
+  "name": "Layout editor",
+  "updatedAt": "2026-11-19T18:55:00.123Z",
+  "schemaVersion": 4,
+  "settings": {
+    "clock": { "style": "digital", "sizePercent": 65 },
+    "positions": { "clock": { "x": 24, "y": 80 }, "shortcuts": null, "actions": null, "music": null },
+    "sectionSizes": { "clock": null, "shortcuts": { "width": 320, "height": 120 }, "music": null },
+    "showShortcuts": false,
+    "hideStatusBar": false,
+    "useSteeringWheelButtons": true,
+    "musicMode": "radio",
+    "radio": { "serverUrl": "https://radio.example.com/stream", "autoplay": false, "width": 0, "height": 120 },
+    "spotify": { "clientId": null, "playbackUri": null, "autoConnect": false, "width": 0, "height": 0, "maxTitleLines": 2 },
+    "background": { "type": "dark" }
+  }
+}
+```
+
+## V3 contract
 
 Use the [v3 JSON Schema](./src/schemas/settings-profile.v3.json) for the exact
 write shape and to validate the snapshot portion of a load response. This API
 does not touch [v1/v2 backups](./README.md#version-compatibility); it neither
 converts them nor offers them in the v3 picker.
 
-## Endpoints
+### V3 endpoints
 
 Every request uses HTTPS and `Authorization: Bearer <Firebase ID token>`.
 Keep Firebase Email/Password sign-in in Android. Obtain the ID token for the
