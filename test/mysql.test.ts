@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { createDatabasePool } from "../src/config.js";
 import { MysqlBackupStore } from "../src/mysql-store.js";
 import { MysqlProfileStore } from "../src/mysql-profile-store.js";
-import { exampleBackup, exampleBackupV2, exampleProfile, exampleProfileV4 } from "./fixtures.js";
+import { exampleBackup, exampleBackupV2, exampleProfile, exampleProfileV4, exampleProfileV5 } from "./fixtures.js";
 
 const skip = process.env.MYSQL_INTEGRATION_TEST !== "true" && "Set MYSQL_INTEGRATION_TEST=true with a dedicated *_test database.";
 
@@ -60,6 +60,7 @@ test("MySQL stores profiles separately and overwrites only the matching UID and 
   const firstId = randomUUID();
   const secondId = randomUUID();
   const layoutId = randomUUID();
+  const musicLayoutId = randomUUID();
   try {
     for (const migration of ["001-settings-backups.sql", "002-settings-profiles.sql"]) {
       await pool.query(await readFile(new URL(`../migrations/${migration}`, import.meta.url), "utf8"));
@@ -81,11 +82,16 @@ test("MySQL stores profiles separately and overwrites only the matching UID and 
     await profiles.create(uid, secondId, second, time);
     const layout = exampleProfileV4();
     await profiles.create(uid, layoutId, layout, time);
+    const musicLayout = exampleProfileV5();
+    await profiles.create(uid, musicLayoutId, musicLayout, time);
     assert.deepEqual(await profiles.list(uid, "", 3), [
       { id: firstId, name: first.name, updatedAt: time.toISOString() },
       { id: secondId, name: second.name, updatedAt: time.toISOString() },
     ].sort((a, b) => a.id.localeCompare(b.id)));
     assert.deepEqual(await profiles.list(uid, "", 4), [{ id: layoutId, name: layout.name, updatedAt: time.toISOString() }]);
+    assert.deepEqual(await profiles.list(uid, "", 5), [{ id: musicLayoutId, name: musicLayout.name, updatedAt: time.toISOString() }]);
+    assert.equal(await profiles.overwrite(uid, layoutId, musicLayout, later), false);
+    assert.deepEqual(await profiles.get(uid, musicLayoutId, 5), { payload: musicLayout, updatedAt: time.toISOString() });
     assert.deepEqual(await profiles.list(otherUid, "", 3), []);
     assert.equal(await profiles.get(otherUid, firstId, 3), null);
     assert.equal(await profiles.get(uid, firstId, 4), null);

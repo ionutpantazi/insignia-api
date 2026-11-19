@@ -1,5 +1,5 @@
 import { type BackupV1, type BackupV2 } from "../src/backup.js";
-import { type ProfileWriteV3, type ProfileWriteV4 } from "../src/profiles.js";
+import { type ProfileWriteV3, type ProfileWriteV4, type ProfileWriteV5 } from "../src/profiles.js";
 
 export function exampleBackup(): BackupV1 {
   return {
@@ -66,6 +66,24 @@ export function exampleProfileV4(): ProfileWriteV4 {
     settings: {
       ...settings,
       sectionSizes: { clock: null, shortcuts: { width: 320, height: 120 }, music: { width: 380, height: 140 } },
+    },
+  };
+}
+
+export function exampleProfileV5(): ProfileWriteV5 {
+  const { name, settings: { positions, sectionSizes, ...settings } } = exampleProfileV4();
+  return {
+    schemaVersion: 5,
+    name,
+    settings: {
+      ...settings,
+      positions: { clock: positions.clock, shortcuts: positions.shortcuts, actions: positions.actions },
+      sectionSizes: { clock: sectionSizes.clock, shortcuts: sectionSizes.shortcuts },
+      musicLayouts: {
+        local: { position: { x: 24, y: 400 }, size: { width: 320, height: 120 } },
+        radio: { position: { x: 0, y: 240 }, size: null },
+        spotify: { position: null, size: { width: 360, height: 142 } },
+      },
     },
   };
 }

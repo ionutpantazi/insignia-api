@@ -111,7 +111,7 @@ export function createApp({ store, profiles, verifyIdToken, logger }: AppDepende
   }
 
   const parseProfile = parseJson(3 * 1024 * 1024);
-  for (const version of [3, 4] as const) {
+  for (const version of [3, 4, 5] as const) {
     registerProfileRoutes(app, profiles, version, authenticate, requireJson, parseProfile);
   }
 

@@ -7,9 +7,11 @@ No Android source was accessed or changed.
 ## Contract
 
 For multiple named, complete Settings-page snapshots with portable wallpapers,
-see the [profiles API](./PROFILES.md). The visual layout editor uses v4, which
-adds exact section footprints without changing v3 profiles. The contract below
-describes the separate legacy v1/v2 single-backup resource.
+see the [profiles API](./PROFILES.md). New layout snapshots use
+[v5](./PROFILES.md#per-player-music-layouts-v5) to store separate Local Music,
+Radio, and Spotify layouts. Existing v3/v4 profiles remain available through
+their original routes. The contract below describes the separate legacy
+v1/v2 single-backup resource.
 
 In v3, radio and Spotify `width` and `height` are all required: `0` means
 Automatic and positive integers are explicit sizes in dp. The API stores

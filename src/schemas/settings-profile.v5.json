@@ -1,16 +1,16 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Launcher settings profile write, version 3",
+  "title": "Launcher settings profile write, version 5",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "name", "settings"],
   "properties": {
-    "schemaVersion": { "type": "integer", "const": 3 },
+    "schemaVersion": { "type": "integer", "const": 5 },
     "name": { "type": "string", "minLength": 1, "maxLength": 80, "pattern": "^(?=[\\s\\S]*\\S)[^\\x00-\\x1f\\x7f]+(?![\\s\\S])" },
     "settings": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["clock", "positions", "showShortcuts", "hideStatusBar", "useSteeringWheelButtons", "musicMode", "radio", "spotify", "background"],
+      "required": ["clock", "positions", "sectionSizes", "musicLayouts", "showShortcuts", "hideStatusBar", "useSteeringWheelButtons", "musicMode", "radio", "spotify", "background"],
       "properties": {
         "clock": {
           "type": "object",
@@ -24,12 +24,30 @@
         "positions": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["clock", "shortcuts", "actions", "music"],
+          "required": ["clock", "shortcuts", "actions"],
           "properties": {
             "clock": { "$ref": "#/definitions/position" },
             "shortcuts": { "$ref": "#/definitions/position" },
-            "actions": { "$ref": "#/definitions/position" },
-            "music": { "$ref": "#/definitions/position" }
+            "actions": { "$ref": "#/definitions/position" }
+          }
+        },
+        "sectionSizes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["clock", "shortcuts"],
+          "properties": {
+            "clock": { "$ref": "#/definitions/sectionSize" },
+            "shortcuts": { "$ref": "#/definitions/sectionSize" }
+          }
+        },
+        "musicLayouts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["local", "radio", "spotify"],
+          "properties": {
+            "local": { "$ref": "#/definitions/musicLayout" },
+            "radio": { "$ref": "#/definitions/musicLayout" },
+            "spotify": { "$ref": "#/definitions/musicLayout" }
           }
         },
         "showShortcuts": { "type": "boolean" },
@@ -90,6 +108,29 @@
   },
   "definitions": {
     "dimension": { "type": "integer", "minimum": 0, "maximum": 2147483647, "description": "0 for Automatic, or a positive integer size in dp." },
+    "musicLayout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["position", "size"],
+      "properties": {
+        "position": { "$ref": "#/definitions/position" },
+        "size": { "$ref": "#/definitions/sectionSize" }
+      }
+    },
+    "sectionSize": {
+      "anyOf": [
+        { "type": "null", "description": "Automatic footprint; use the existing clock scale or the player's existing sizing behavior where applicable." },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["width", "height"],
+          "properties": {
+            "width": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+            "height": { "type": "integer", "minimum": 1, "maximum": 2147483647 }
+          }
+        }
+      ]
+    },
     "position": {
       "anyOf": [
         { "type": "null", "description": "Automatic placement." },

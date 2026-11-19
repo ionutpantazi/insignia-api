@@ -1,5 +1,128 @@
 # Android settings profiles API
 
+## Per-player music layouts (v5)
+
+Use the [v5 JSON Schema](./src/schemas/settings-profile.v5.json). All routes use
+HTTPS and `Authorization: Bearer <Firebase ID token>`. POST and PUT take a
+complete, uncompressed UTF-8 `application/json` snapshot with `schemaVersion: 5`.
+
+| Method and path | Success |
+| --- | --- |
+| `POST /v5/me/settings-profiles` | `201 Created`, summary and `Location` |
+| `GET /v5/me/settings-profiles` | `200 OK`, page of v5 summaries |
+| `GET /v5/me/settings-profiles/{id}` | `200 OK`, complete v5 snapshot |
+| `PUT /v5/me/settings-profiles/{id}` | `200 OK`, updated summary; does not create |
+
+`settings.musicLayouts` replaces `positions.music` and `sectionSizes.music`.
+Both old fields are rejected in v5. `musicLayouts.local`, `radio`, and `spotify`
+are all required, including when `musicMode` is `"none"`. Each entry must
+contain both `position` and `size`. Send explicit `null` for automatic placement
+or sizing; a missing field is invalid. Non-null coordinates are integer dp
+offsets from the top-left of usable Home content, in `0..2147483647`. Non-null
+dimensions are integer dp sizes in `1..2147483647`. None of these values are
+adjusted on the server. Android handles screen fit and overlap.
+
+For a null `size`, use that player's existing sizing behavior, including the
+saved `radio.width`/`height` or `spotify.width`/`height` when applicable. Those
+fields still accept `0` for Automatic. The rest of the v4 contract is unchanged,
+including the [wallpaper transfer and atomic write behavior](#settings-and-wallpaper-transfer).
+
+### V5 create and overwrite examples
+
+`POST /v5/me/settings-profiles`:
+
+```json
+{
+  "schemaVersion": 5,
+  "name": "Daily layout",
+  "settings": {
+    "clock": { "style": "digital", "sizePercent": 100 },
+    "positions": { "clock": { "x": 24, "y": 80 }, "shortcuts": null, "actions": null },
+    "sectionSizes": { "clock": null, "shortcuts": null },
+    "musicLayouts": {
+      "local": { "position": { "x": 24, "y": 400 }, "size": { "width": 320, "height": 120 } },
+      "radio": { "position": { "x": 0, "y": 240 }, "size": null },
+      "spotify": { "position": null, "size": { "width": 360, "height": 142 } }
+    },
+    "showShortcuts": false,
+    "hideStatusBar": false,
+    "useSteeringWheelButtons": true,
+    "musicMode": "none",
+    "radio": { "serverUrl": "https://radio.example.com/stream", "autoplay": false, "width": 0, "height": 120 },
+    "spotify": { "clientId": null, "playbackUri": null, "autoConnect": false, "width": 0, "height": 0, "maxTitleLines": 2 },
+    "background": { "type": "dark" }
+  }
+}
+```
+
+`201 Created`, with `Location: /v5/me/settings-profiles/86df72d0-26ad-41d7-904a-c17139126234`:
+
+```json
+{ "id": "86df72d0-26ad-41d7-904a-c17139126234", "name": "Daily layout", "updatedAt": "2026-11-19T19:55:00.123Z" }
+```
+
+To rename it while keeping its settings, send that same full request body with
+`"name": "Night layout"` to `PUT /v5/me/settings-profiles/86df72d0-26ad-41d7-904a-c17139126234`.
+Do not include `id` or `updatedAt` in the write body. The response is `200 OK`:
+
+```json
+{ "id": "86df72d0-26ad-41d7-904a-c17139126234", "name": "Night layout", "updatedAt": "2026-11-19T20:00:00.456Z" }
+```
+
+### V5 list and load examples
+
+`GET /v5/me/settings-profiles` has no request body. Example `200 OK` response:
+
+```json
+{
+  "profiles": [
+    { "id": "86df72d0-26ad-41d7-904a-c17139126234", "name": "Night layout", "updatedAt": "2026-11-19T20:00:00.456Z" }
+  ],
+  "nextCursor": null
+}
+```
+
+There are at most 50 summaries per page. When `nextCursor` is not null,
+send `GET /v5/me/settings-profiles?after=<nextCursor>`.
+
+`GET /v5/me/settings-profiles/86df72d0-26ad-41d7-904a-c17139126234` also has no
+request body. Example `200 OK` response:
+
+```json
+{
+  "id": "86df72d0-26ad-41d7-904a-c17139126234",
+  "updatedAt": "2026-11-19T20:00:00.456Z",
+  "schemaVersion": 5,
+  "name": "Night layout",
+  "settings": {
+    "clock": { "style": "digital", "sizePercent": 100 },
+    "positions": { "clock": { "x": 24, "y": 80 }, "shortcuts": null, "actions": null },
+    "sectionSizes": { "clock": null, "shortcuts": null },
+    "musicLayouts": {
+      "local": { "position": { "x": 24, "y": 400 }, "size": { "width": 320, "height": 120 } },
+      "radio": { "position": { "x": 0, "y": 240 }, "size": null },
+      "spotify": { "position": null, "size": { "width": 360, "height": 142 } }
+    },
+    "showShortcuts": false,
+    "hideStatusBar": false,
+    "useSteeringWheelButtons": true,
+    "musicMode": "none",
+    "radio": { "serverUrl": "https://radio.example.com/stream", "autoplay": false, "width": 0, "height": 120 },
+    "spotify": { "clientId": null, "playbackUri": null, "autoConnect": false, "width": 0, "height": 0, "maxTitleLines": 2 },
+    "background": { "type": "dark" }
+  }
+}
+```
+
+### V5 deployment and version isolation
+
+Deploy the updated API with the existing `settings_profiles` table and runtime
+permissions. **No new migration is needed**: the JSON payload already stores the
+schema version used to scope list, load, and overwrite. Fresh deployments still
+apply the existing migrations. Older snapshots remain untouched and readable
+through their original endpoints. A v4 ID used with a v5 detail GET or valid
+v5 PUT returns `404 PROFILE_NOT_FOUND`, just like an ID owned by another user.
+
 ## Visual layout editor (v4)
 
 Use the [v4 JSON Schema](./src/schemas/settings-profile.v4.json). The v4 endpoints

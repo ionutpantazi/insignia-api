@@ -5,7 +5,7 @@ import sharp from "sharp";
 import { createApp } from "../src/app.js";
 import { type Backup, type BackupStore, type StoredBackup } from "../src/backup.js";
 import { type ProfileStore, type ProfileVersion, type ProfileWrite, profilePageSize } from "../src/profiles.js";
-import { exampleBackup, exampleBackupV2, exampleProfile, exampleProfileV4 } from "./fixtures.js";
+import { exampleBackup, exampleBackupV2, exampleProfile, exampleProfileV4, exampleProfileV5 } from "./fixtures.js";
 
 class MemoryStore implements BackupStore {
   readonly backups = new Map<string, StoredBackup>();
@@ -514,6 +514,83 @@ async function createProfile(payload: ProfileWrite) {
   assert.equal(new Date(summary.updatedAt).toISOString(), summary.updatedAt);
   return summary;
 }
+
+test("v5 saves and overwrites distinct layouts with music disabled, preserving nulls, zero and Int bounds", async () => {
+  const profile = exampleProfileV5();
+  assert.equal(profile.settings.musicMode, "none");
+  profile.settings.radio.width = 0;
+  profile.settings.spotify.height = 0;
+  const created = await createProfile(profile);
+  const path = `/${created.id}`;
+  const loaded = await profileRequest("GET", path, undefined, undefined, 5);
+  assert.equal(loaded.status, 200);
+  assert.deepEqual(await loaded.json(), { ...profile, ...created });
+
+  const edited = structuredClone(profile);
+  edited.settings.musicLayouts.local.position = { x: 2147483647, y: 0 };
+  edited.settings.musicLayouts.local.size = { width: 1, height: 2147483647 };
+  const saved = await profileRequest("PUT", path, edited, undefined, 5);
+  assert.equal(saved.status, 200);
+  const updated = await saved.json();
+  assert.equal(updated.id, created.id);
+  assert.deepEqual(await (await profileRequest("GET", path, undefined, undefined, 5)).json(), { ...edited, ...updated });
+});
+
+test("v5 rejects missing, invalid, unknown, and legacy shared music layout fields", async () => {
+  const profile = exampleProfileV5();
+  const { musicLayouts, positions, sectionSizes } = profile.settings;
+  const invalidSettings: Record<string, unknown>[] = [
+    { musicLayouts: undefined },
+    { musicLayouts: null },
+    { musicLayouts: { ...musicLayouts, extra: musicLayouts.local } },
+    { positions: { ...positions, music: null } },
+    { sectionSizes: { ...sectionSizes, music: null } },
+  ];
+  for (const player of ["local", "radio", "spotify"] as const) {
+    const layout = musicLayouts[player];
+    for (const value of [
+      undefined, null, { position: null }, { size: null }, { ...layout, extra: null },
+      { ...layout, position: { x: -1, y: 0 } },
+      { ...layout, position: { x: 0, y: 1.5 } },
+      { ...layout, position: { x: 2147483648, y: 0 } },
+      { ...layout, size: { width: 0, height: 1 } },
+      { ...layout, size: { width: 1.5, height: 1 } },
+      { ...layout, size: { width: 1, height: 2147483648 } },
+    ]) {
+      invalidSettings.push({ musicLayouts: { ...musicLayouts, [player]: value } });
+    }
+  }
+  for (const changes of invalidSettings) {
+    const invalid = { ...profile, settings: { ...profile.settings, ...changes } };
+    const response = await profileRequest("POST", "", invalid, undefined, 5);
+    assert.equal(response.status, 422, JSON.stringify(changes));
+    assert.equal((await response.json()).error.code, "VALIDATION_FAILED");
+  }
+});
+
+test("v5 and v4 profiles are isolated by version and verified UID, preserving v4 wallpaper", async () => {
+  const png = await sharp({ create: { width: 1, height: 1, channels: 3, background: "blue" } }).png().toBuffer();
+  const legacy = exampleProfileV4();
+  legacy.settings.background = { type: "custom", image: { mediaType: "image/png", dataBase64: png.toString("base64") } };
+  const v4 = await createProfile(legacy);
+  const v4Path = `/${v4.id}`;
+  const before = await profileRequest("GET", v4Path, undefined, undefined, 4);
+  assert.equal(before.status, 200);
+  const snapshot = await before.json();
+  const profile = exampleProfileV5();
+  const v5 = await createProfile(profile);
+  const v5Path = `/${v5.id}`;
+  assert.deepEqual(await (await profileRequest("GET", "", undefined, undefined, 5)).json(), { profiles: [v5], nextCursor: null });
+  assert.deepEqual(await (await profileRequest("GET", "", undefined, undefined, 4)).json(), { profiles: [v4], nextCursor: null });
+  assert.deepEqual(await (await profileRequest("GET", "", undefined, "user-b-token", 5)).json(), { profiles: [], nextCursor: null });
+  assert.equal((await profileRequest("GET", v4Path, undefined, undefined, 5)).status, 404);
+  assert.equal((await profileRequest("PUT", v4Path, profile, undefined, 5)).status, 404);
+  assert.equal((await profileRequest("PUT", v5Path, legacy, undefined, 4)).status, 404);
+  assert.equal((await profileRequest("GET", v5Path, undefined, "user-b-token", 5)).status, 404);
+  assert.equal((await profileRequest("PUT", v5Path, profile, "user-b-token", 5)).status, 404);
+  assert.deepEqual(await (await profileRequest("GET", v4Path, undefined, undefined, 4)).json(), snapshot);
+  assert.deepEqual(await (await profileRequest("GET", v5Path, undefined, undefined, 5)).json(), { ...profile, ...v5 });
+});
 
 test("v4 round-trips section sizes and positions without resizing hidden or overlapping sections", async () => {
   const profile = exampleProfileV4();

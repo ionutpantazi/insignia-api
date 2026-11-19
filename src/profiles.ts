@@ -2,10 +2,12 @@ import { Ajv } from "ajv";
 import sharp from "sharp";
 import schemaV3 from "./schemas/settings-profile.v3.json" with { type: "json" };
 import schemaV4 from "./schemas/settings-profile.v4.json" with { type: "json" };
+import schemaV5 from "./schemas/settings-profile.v5.json" with { type: "json" };
 import { type Position } from "./backup.js";
 import { HttpError } from "./errors.js";
 
 type Image = { mediaType: "image/png" | "image/jpeg"; dataBase64: string };
+type SectionSize = { width: number; height: number } | null;
 
 export interface ProfileWriteV3 {
   schemaVersion: 3;
@@ -34,11 +36,21 @@ export interface ProfileWriteV4 {
   schemaVersion: 4;
   name: string;
   settings: ProfileWriteV3["settings"] & {
-    sectionSizes: Record<"clock" | "shortcuts" | "music", { width: number; height: number } | null>;
+    sectionSizes: Record<"clock" | "shortcuts" | "music", SectionSize>;
   };
 }
 
-export type ProfileWrite = ProfileWriteV3 | ProfileWriteV4;
+export interface ProfileWriteV5 {
+  schemaVersion: 5;
+  name: string;
+  settings: Omit<ProfileWriteV4["settings"], "positions" | "sectionSizes"> & {
+    positions: Omit<ProfileWriteV4["settings"]["positions"], "music">;
+    sectionSizes: Omit<ProfileWriteV4["settings"]["sectionSizes"], "music">;
+    musicLayouts: Record<"local" | "radio" | "spotify", { position: Position; size: SectionSize }>;
+  };
+}
+
+export type ProfileWrite = ProfileWriteV3 | ProfileWriteV4 | ProfileWriteV5;
 export type ProfileVersion = ProfileWrite["schemaVersion"];
 
 export interface ProfileSummary {
@@ -60,6 +72,7 @@ const ajv = new Ajv({ allErrors: true, strict: true, ownProperties: true });
 export const profileValidators = {
   3: ajv.compile<ProfileWriteV3>(schemaV3),
   4: ajv.compile<ProfileWriteV4>(schemaV4),
+  5: ajv.compile<ProfileWriteV5>(schemaV5),
 };
 
 export function isPublicRadioUrl(value: string): boolean {
