@@ -1,37 +1,30 @@
 {
-  "name": "insignia",
-  "settings": {
-    "clock": {
-      "style": "digital",
-      "sizePercent": 65
-    },
-    "radio": {
-      "width": 0,
-      "height": 0,
-      "autoplay": true,
-      "serverUrl": "http://devserver-gateway.ddns.net:3001"
-    },
-    "spotify": {
-      "width": 0,
-      "height": 0,
-      "clientId": "39a88ef65f014fc5ac7386e9875ad0a4",
-      "autoConnect": false,
-      "playbackUri": null,
-      "maxTitleLines": 2
-    },
-    "musicMode": "radio",
-    "positions": {
-      "clock": null,
-      "music": null,
-      "actions": null,
-      "shortcuts": null
-    },
-    "background": {
-      "type": "dark"
-    },
-    "hideStatusBar": false,
-    "showShortcuts": true,
-    "useSteeringWheelButtons": false
+  "name": "insignia-settings-backup-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
   },
-  "schemaVersion": 3
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "dev": "node --import tsx src/server.ts",
+    "migrate": "node --import tsx src/migrate.ts",
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.test.json"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "express": "^5.1.0",
+    "firebase-admin": "^14.5.1",
+    "mysql2": "^3.15.3",
+    "sharp": "^0.35.5"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.5",
+    "@types/node": "^22.19.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
 }
