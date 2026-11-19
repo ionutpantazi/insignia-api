@@ -69,6 +69,10 @@ test("MySQL stores profiles separately and overwrites only the matching UID and 
     const first = exampleProfile("Daily commute");
     const second = exampleProfile("Weekend");
     const changed = exampleProfile("Updated daily commute");
+    first.settings.radio.width = 0;
+    first.settings.spotify.height = 0;
+    changed.settings.radio.height = 0;
+    changed.settings.spotify.width = 0;
     const time = new Date("2026-11-19T18:20:00.123Z");
     const later = new Date("2026-11-19T18:22:00.456Z");
     await backups.save(uid, v2);

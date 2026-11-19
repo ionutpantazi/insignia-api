@@ -89,7 +89,7 @@
     }
   },
   "definitions": {
-    "dimension": { "type": "integer", "minimum": 1, "maximum": 2147483647, "description": "Positive integer dp." },
+    "dimension": { "type": "integer", "minimum": 0, "maximum": 2147483647, "description": "0 for Automatic, or a positive integer size in dp." },
     "position": {
       "anyOf": [
         { "type": "null", "description": "Automatic placement." },

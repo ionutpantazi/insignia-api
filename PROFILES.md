@@ -54,7 +54,7 @@ authorization header applies to each example, including GET.
     "hideStatusBar": true,
     "useSteeringWheelButtons": true,
     "musicMode": "none",
-    "radio": { "serverUrl": "https://radio.example.com/stream?station=jazz", "autoplay": true, "width": 360, "height": 126 },
+    "radio": { "serverUrl": "https://radio.example.com/stream?station=jazz", "autoplay": true, "width": 0, "height": 126 },
     "spotify": {
       "clientId": "0123456789abcdef0123456789abcdef",
       "playbackUri": "spotify:playlist:0123456789abcdefghijAB",
@@ -117,7 +117,7 @@ The launcher can sort accumulated entries by name or `updatedAt` for display.
     "hideStatusBar": true,
     "useSteeringWheelButtons": true,
     "musicMode": "none",
-    "radio": { "serverUrl": "https://radio.example.com/stream?station=jazz", "autoplay": true, "width": 360, "height": 126 },
+    "radio": { "serverUrl": "https://radio.example.com/stream?station=jazz", "autoplay": true, "width": 0, "height": 126 },
     "spotify": {
       "clientId": "0123456789abcdef0123456789abcdef",
       "playbackUri": "spotify:playlist:0123456789abcdefghijAB",
@@ -172,9 +172,12 @@ Do not send `id` or `updatedAt` in either write body.
   integer dp, from the usable content's top-left to the section's top-left.
   Keep all positions even when a section is hidden; `none` hides the music box.
   Both players' settings must be included regardless of music mode.
-- Radio/Spotify `width` and `height` are positive integer dp. `maxTitleLines`
-  is a positive integer. Positions, dimensions and line count fit a signed
-  32-bit Kotlin `Int`; the renderer remains responsible for display bounds.
+- Radio/Spotify `width` and `height` are all required. Each accepts `0` for
+  Automatic or a positive integer size in dp. The API stores and returns `0`
+  unchanged, not as `null`, an omitted field, or a default size. Negative and
+  fractional dimensions are rejected. `maxTitleLines` is a positive integer.
+  Positions, dimensions and line count fit a signed 32-bit Kotlin `Int`;
+  the renderer remains responsible for display bounds.
 - Radio `serverUrl` is stored verbatim and never fetched or resolved. Lowercase
   `http://` or `https://` is required; ordinary query parameters are supported.
   Use URLs of at most 2048 characters, without userinfo or fragments. The API

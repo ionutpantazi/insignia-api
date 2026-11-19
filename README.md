@@ -10,6 +10,10 @@ For multiple named, complete Settings-page snapshots with portable wallpapers,
 see the [v3 profiles API](./PROFILES.md). The contract below describes the separate
 legacy v1/v2 single-backup resource; v3 does not read or migrate those backups.
 
+In v3, radio and Spotify `width` and `height` are all required: `0` means
+Automatic and positive integers are explicit sizes in dp. The API stores
+and returns `0` unchanged.
+
 Public base URL: `https://backup.example.com` (replace with your own domain).
 Every operation requires HTTPS and `Authorization: Bearer <Firebase ID token>`.
 

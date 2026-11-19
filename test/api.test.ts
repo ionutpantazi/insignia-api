@@ -538,6 +538,48 @@ test("v3 creates two named snapshots, lists metadata only, and overwrites just t
   assert.deepEqual(await (await profileRequest("GET", secondPath)).json(), { ...second, ...secondSummary });
 });
 
+test("v3 preserves mixed Automatic and explicit dimensions on create, load, and overwrite", async () => {
+  const profile = exampleProfile();
+  profile.settings.radio.width = 0;
+  profile.settings.spotify.height = 0;
+  const created = await createProfile(profile);
+  const path = `/${created.id}`;
+  const loaded = await profileRequest("GET", path);
+  assert.equal(loaded.status, 200);
+  assert.deepEqual(await loaded.json(), { ...profile, ...created });
+
+  const edited = exampleProfile();
+  edited.settings.radio.height = 0;
+  edited.settings.spotify.width = 0;
+  const overwritten = await profileRequest("PUT", path, edited);
+  assert.equal(overwritten.status, 200);
+  const updated = await overwritten.json();
+  assert.equal(updated.id, created.id);
+  const reloaded = await profileRequest("GET", path);
+  assert.equal(reloaded.status, 200);
+  assert.deepEqual(await reloaded.json(), { ...edited, ...updated });
+});
+
+test("v3 rejects missing, null, negative, and fractional dimensions for both players", async () => {
+  const profile = exampleProfile();
+  for (const player of ["radio", "spotify"] as const) {
+    for (const field of ["width", "height"] as const) {
+      for (const value of [undefined, null, -1, 0.5]) {
+        const invalid = {
+          ...profile,
+          settings: {
+            ...profile.settings,
+            [player]: { ...profile.settings[player], [field]: value },
+          },
+        };
+        const response = await profileRequest("POST", "", invalid);
+        assert.equal(response.status, 422, `${player}.${field}: ${value}`);
+        assert.equal((await response.json()).error.code, "VALIDATION_FAILED");
+      }
+    }
+  }
+});
+
 test("v3 scopes list, load, and overwrite to a verified UID; PUT never creates", async () => {
   const summary = await createProfile(exampleProfile());
   const path = `/${summary.id}?uid=user-a`;
@@ -582,7 +624,6 @@ test("v3 rejects incomplete snapshots, private fields, and invalid or credential
     { ...profile, settings: { ...settings, clock: { style: "analog", sizePercent: 200.01 } } },
     { ...profile, settings: { ...settings, positions: { ...settings.positions, music: { x: -1, y: 10 } } } },
     { ...profile, settings: { ...settings, spotify: undefined } },
-    { ...profile, settings: { ...settings, radio: { ...settings.radio, width: 0 } } },
     { ...profile, settings: { ...settings, spotify: { ...settings.spotify, clientSecret: "private" } } },
     { ...profile, settings: { ...settings, spotify: { ...settings.spotify, playbackUri: "content://usb" } } },
     { ...profile, settings: { ...settings, playbackState: "playing", shortcutAssignments: [] } },
