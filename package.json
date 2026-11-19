@@ -1,1 +1,37 @@
-{"name": "insignia", "settings": {"clock": {"style": "digital", "sizePercent": 65}, "radio": {"width": 0, "height": 0, "autoplay": true, "serverUrl": "http://devserver-gateway.ddns.net:3001"}, "spotify": {"width": 0, "height": 0, "clientId": "39a88ef65f014fc5ac7386e9875ad0a4", "autoConnect": false, "playbackUri": null, "maxTitleLines": 2}, "musicMode": "radio", "positions": {"clock": null, "music": null, "actions": null, "shortcuts": null}, "background": {"type": "dark"}, "hideStatusBar": false, "showShortcuts": true, "useSteeringWheelButtons": false}, "schemaVersion": 3}
+{
+  "name": "insignia",
+  "settings": {
+    "clock": {
+      "style": "digital",
+      "sizePercent": 65
+    },
+    "radio": {
+      "width": 0,
+      "height": 0,
+      "autoplay": true,
+      "serverUrl": "http://devserver-gateway.ddns.net:3001"
+    },
+    "spotify": {
+      "width": 0,
+      "height": 0,
+      "clientId": "39a88ef65f014fc5ac7386e9875ad0a4",
+      "autoConnect": false,
+      "playbackUri": null,
+      "maxTitleLines": 2
+    },
+    "musicMode": "radio",
+    "positions": {
+      "clock": null,
+      "music": null,
+      "actions": null,
+      "shortcuts": null
+    },
+    "background": {
+      "type": "dark"
+    },
+    "hideStatusBar": false,
+    "showShortcuts": true,
+    "useSteeringWheelButtons": false
+  },
+  "schemaVersion": 3
+}
