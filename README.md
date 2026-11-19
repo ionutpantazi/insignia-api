@@ -11,8 +11,8 @@ Every operation requires HTTPS and `Authorization: Bearer <Firebase ID token>`.
 
 | Operation | Request | Success |
 | --- | --- | --- |
-| Save/replace my latest backup | `PUT /v1/me/settings-backup` | `204 No Content` |
-| Retrieve my latest backup | `GET /v1/me/settings-backup` | `200` with the envelope below |
+| Save/replace my latest backup | `PUT /v2/me/settings-backup` | `204 No Content` |
+| Retrieve my latest backup | `GET /v2/me/settings-backup` | `200` with the envelope below |
 
 There is exactly one latest backup per Firebase UID, not per device. The UID comes
 only from a verified Firebase ID token, never from a path, query parameter, or body.
@@ -25,29 +25,49 @@ Concurrent successful saves use last-database-write-wins; there is no history,
 merge, or background sync. A response timeout can occur after a save committed:
 report an uncertain result, not success; the same full PUT may safely be retried.
 
+### Version compatibility
+
+The Android contract below is **v2**. The unchanged
+[v1 schema](src/schemas/settings-backup.v1.json) remains available through
+`PUT /v1/me/settings-backup` and `GET /v1/me/settings-backup`.
+Each PUT accepts only its endpoint's schema version; using the other version or
+just relabeling a v1 payload as v2 returns 422.
+
+There is still **one latest backup per account**, not one per schema version.
+If the stored backup is valid but belongs to the other version, GET returns
+**409 `BACKUP_VERSION_MISMATCH`**, without returning converted preferences.
+For example, GET v2 when only a v1 backup exists does not return 404, reinterpret
+normalized positions as dp, or map legacy clock presets into percentages.
+GET v1 still returns that original v1 backup unchanged.
+
+A successful explicit v2 PUT replaces the previous backup, including a v1 backup;
+the reverse is also true for an explicit valid v1 PUT. Warn the user before replacing
+a backup made by another app version/device. No automatic migration or fallback is
+performed. Existing database rows and the table layout require no migration for v2.
+
 ### Save example
 
 ```http
-PUT /v1/me/settings-backup HTTP/1.1
+PUT /v2/me/settings-backup HTTP/1.1
 Host: backup.example.com
 Authorization: Bearer <Firebase ID token>
 Content-Type: application/json
 
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "preferences": {
     "clock": {
       "style": "digital",
-      "size": "large",
-      "hourCycle": "h23",
-      "showSeconds": false
+      "sizePercent": 125
     },
-    "sections": {
-      "clock": { "visible": true, "position": { "x": 0.5, "y": 0.2 } },
-      "shortcuts": { "visible": true, "position": { "x": 0.5, "y": 0.8 } },
-      "player": { "visible": true, "position": { "x": 0.5, "y": 0.5 } }
+    "positions": {
+      "clock": { "x": 24, "y": 80 },
+      "shortcuts": { "x": 24, "y": 240 },
+      "actions": null,
+      "music": { "x": 24, "y": 400 }
     },
-    "player": { "selection": "local" }
+    "showShortcuts": true,
+    "musicPlayer": "local"
   }
 }
 ```
@@ -62,7 +82,7 @@ PUT has no response body. Do not attempt to decode one.
 ### Retrieve example
 
 ```http
-GET /v1/me/settings-backup HTTP/1.1
+GET /v2/me/settings-backup HTTP/1.1
 Host: backup.example.com
 Authorization: Bearer <Firebase ID token>
 ```
@@ -74,20 +94,20 @@ Cache-Control: no-store
 
 {
   "backup": {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "preferences": {
       "clock": {
         "style": "digital",
-        "size": "large",
-        "hourCycle": "h23",
-        "showSeconds": false
+        "sizePercent": 125
       },
-      "sections": {
-        "clock": { "visible": true, "position": { "x": 0.5, "y": 0.2 } },
-        "shortcuts": { "visible": true, "position": { "x": 0.5, "y": 0.8 } },
-        "player": { "visible": true, "position": { "x": 0.5, "y": 0.5 } }
+      "positions": {
+        "clock": { "x": 24, "y": 80 },
+        "shortcuts": { "x": 24, "y": 240 },
+        "actions": null,
+        "music": { "x": 24, "y": 400 }
       },
-      "player": { "selection": "local" }
+      "showShortcuts": true,
+      "musicPlayer": "local"
     }
   },
   "updatedAt": "2026-11-19T16:00:00.000Z"
@@ -99,23 +119,32 @@ Cache-Control: no-store
 ### Payload semantics and validation
 
 The authoritative, reusable payload schema is
-[settings-backup.v1.json](src/schemas/settings-backup.v1.json).
+[settings-backup.v2.json](src/schemas/settings-backup.v2.json).
 The Android adapter should explicitly map its local settings to/from these fields;
 these names are a proposed wire contract, not claims about existing SharedPreferences keys.
 
-- Both the route (`v1`) and payload (`schemaVersion: 1`) are versioned.
+- Both the route (`v2`) and payload (`schemaVersion: 2`) are versioned.
   Unsupported payload versions are rejected, not silently migrated or downgraded.
   Breaking changes require an explicit new contract/migration.
-- All fields shown in the request are required; `null` and omitted fields are invalid.
-- Clock style: `digital | analog`; size: `small | medium | large`.
-  Sizes are semantic presets mapped by Android to its own dp/sp values, not raw pixels.
-  Hour cycle is `h12` (1-12) or `h23` (0-23).
-- Each section has `visible: boolean` and a position with finite numeric `x`, `y`,
-  each inclusive in `[0, 1]`. They represent the section's center in the usable
-  Home content area: `(0,0)` top-left and `(1,1)` bottom-right.
-  Android clamps rendered bounds to its available area after sizing; positions
-  and visibility are retained even for hidden sections. Overlap is permitted.
-- Player selection: `local | spotify | radio`. This chooses a UI/player mode only;
+- All fields shown in the request are required. Only a position may be `null`;
+  omitting a position is invalid and is not the same as automatic placement.
+- Clock style: `digital | analog`; `sizePercent` is an integer from **50 through 200**
+  inclusive, relative to the launcher's base clock size. There are no separate
+  hour-cycle, seconds, or clock-visibility preferences in v2; those fields are
+  not in its allowlist and must not be sent.
+- `positions` includes **clock, shortcuts, actions, and music**. Each value is
+  either `null` for automatic placement or an object with required `x` and `y`,
+  both nonnegative integer **dp** offsets. They are measured from the **top-left
+  of usable Home content to the top-left of the section**, not screen pixels,
+  normalized fractions, center anchors, or coordinates including system insets.
+  `(0,0)` is a valid manual position, not automatic placement.
+  Preserve positions even when a section is hidden; changing visibility/player
+  mode must not clear, reset, or normalize them. Overlap is permitted.
+  On different-size displays Android may clamp rendered bounds to the usable area,
+  but must retain the saved dp position rather than rewriting the backup.
+- `showShortcuts` is a boolean controlling shortcuts visibility only.
+- `musicPlayer`: `none | local | spotify | radio`. **`none` hides the music box**,
+  without clearing `positions.music`. Other values choose a UI/player mode only;
   it does not sign in, assign a station, grant file access, or start playback.
   If a service is unavailable, retain the selection and show a local setup/unavailable
   state without importing credentials or silently changing the backup.
@@ -140,10 +169,10 @@ Error body:
 {
   "error": {
     "code": "VALIDATION_FAILED",
-    "message": "The backup does not match schema version 1.",
+    "message": "The backup does not match schema version 2.",
     "details": [
       {
-        "path": "/preferences/player/selection",
+        "path": "/preferences/musicPlayer",
         "keyword": "enum",
         "message": "must be equal to one of the allowed values"
       }
@@ -163,6 +192,7 @@ not stable localized UI strings; branch on status and `error.code`.
 | 401 | `UNAUTHENTICATED` | Missing, invalid, expired, revoked, disabled-user, or wrong-project token. Refresh once or prompt sign-in. |
 | 404 | `NO_BACKUP` | This signed-in account has never saved a backup. Show "No backup found"; change nothing locally. |
 | 404 | `NOT_FOUND` | Unknown route. |
+| 409 | `BACKUP_VERSION_MISMATCH` | The latest backup belongs to the other supported schema version. Do not relabel or apply it as this version. |
 | 413 | `PAYLOAD_TOO_LARGE` | Body exceeds 16,384 bytes. Fix serialization; do not silently truncate. |
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | Use uncompressed UTF-8 `application/json`. |
 | 422 | `VALIDATION_FAILED` | Invalid/missing/extra fields or unsupported `schemaVersion`. Do not apply a partial backup. |
@@ -186,10 +216,12 @@ may return non-JSON, HTML, or no response: treat any unexpected status/body as f
 
 ## Authentication
 
-1. Create/use a Firebase project and enable the desired **durable** sign-in method
-   (for example email/password or Google). Configure the Android Firebase SDK for
-   that same project. Anonymous accounts alone are unsuitable for reinstall/device
-   replacement unless linked to a recoverable sign-in method.
+1. Keep **Firebase Email/Password** sign-in enabled in the Firebase project and
+   configure the Android Firebase SDK for that same project. Android signs in with
+   `signInWithEmailAndPassword` (and uses Firebase's account creation/password reset
+   flows as needed). The backup API does not receive or store the user's password.
+   Anonymous accounts alone are unsuitable for reinstall/device replacement unless
+   linked to a recoverable sign-in method.
 2. The user must sign into the **same Firebase account/UID** on the replacement
    head unit. Email strings are not identity keys; deleting/recreating an account,
    using a different Firebase project, or an unlinked provider may produce a new UID
@@ -245,8 +277,9 @@ Firebase token refresh is separate from backup; it must never gate Home.
    validation (types, enums, finite coordinates, ranges, forbidden/unknown fields).
    Do not substitute defaults on validation failure.
 3. Ask the user before replacing their portable preferences, with the backup time
-   and account shown. Cancellation, 404, offline/network/auth failures, malformed
-   JSON or unsupported versions must leave **all local settings and caches unchanged**.
+   and account shown. Cancellation, 404, 409 version mismatch, offline/network/auth
+   failures, malformed JSON or unsupported versions must leave **all local settings
+   and caches unchanged**.
 4. Serialize the apply step through the same settings owner/lock used by normal
    edits. Capture current portable values immediately before applying. Merge **only**
    the allowlisted keys into the current local snapshot; never call
@@ -280,9 +313,12 @@ are included. A separate Firebase-backed document database is **not** required.
 
 1. Install: `npm ci`.
 2. Copy `.env.example` to `.env` and set your project, server credential path and MySQL
-   connection. Never commit `.env` or credential JSON. Development/migration scripts
-   load `.env`; production `npm start` expects environment variables supplied by the
-   service manager (or use `node --env-file=.env dist/server.js`).
+   connection. Never commit `.env` or credential JSON. Run commands from the project
+   root: the shared configuration loads `.env` from the current working directory
+   for development, migration, `npm start`, and direct execution. Variables already
+   supplied by the shell/service manager take precedence. The file is optional for
+   deployments that supply environment variables externally; required variables
+   are still validated before startup.
 3. Create the MySQL database and dedicated accounts using an administrator.
    Run `npm run migrate` with a migration account authorized to CREATE the table;
    the repeatable migration creates only `settings_backups`.

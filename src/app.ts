@@ -1,5 +1,5 @@
 import express, { type ErrorRequestHandler, type RequestHandler } from "express";
-import { type BackupStore, validateBackup } from "./backup.js";
+import { type BackupStore, backupValidators, validateBackup } from "./backup.js";
 import { errorCode, errorSummary, HttpError } from "./errors.js";
 
 export interface AppDependencies {
@@ -57,53 +57,64 @@ export function createApp({ store, verifyIdToken, logger }: AppDependencies) {
     next();
   };
 
-  app.put(
-    "/v1/me/settings-backup",
-    authenticate,
-    requireJson,
-    express.json({
-      limit: 16 * 1024,
-      strict: true,
-      inflate: false,
-      verify: (_req, _res, _body, encoding) => {
-        if (encoding !== "utf-8") {
-          throw new HttpError(415, "UNSUPPORTED_MEDIA_TYPE", "Use uncompressed UTF-8 JSON.");
+  for (const version of [1, 2] as const) {
+    const path = `/v${version}/me/settings-backup`;
+    const validate = backupValidators[version];
+    app.put(
+      path,
+      authenticate,
+      requireJson,
+      express.json({
+        limit: 16 * 1024,
+        strict: true,
+        inflate: false,
+        verify: (_req, _res, _body, encoding) => {
+          if (encoding !== "utf-8") {
+            throw new HttpError(415, "UNSUPPORTED_MEDIA_TYPE", "Use uncompressed UTF-8 JSON.");
+          }
+        },
+      }),
+      async (req, res) => {
+        const body: unknown = req.body;
+        if (!validate(body)) {
+          res.status(422).json({
+            error: {
+              code: "VALIDATION_FAILED",
+              message: `The backup does not match schema version ${version}.`,
+              details: validate.errors?.slice(0, 10).map((error) => ({
+                path: error.instancePath || "/",
+                keyword: error.keyword,
+                message: error.message,
+              })),
+            },
+          });
+          return;
         }
+        const uid: string = res.locals.uid;
+        await store.save(uid, body);
+        res.status(204).end();
       },
-    }),
-    async (req, res) => {
-      const body: unknown = req.body;
-      if (!validateBackup(body)) {
-        res.status(422).json({
-          error: {
-            code: "VALIDATION_FAILED",
-            message: "The backup does not match schema version 1.",
-            details: validateBackup.errors?.slice(0, 10).map((error) => ({
-              path: error.instancePath || "/",
-              keyword: error.keyword,
-              message: error.message,
-            })),
-          },
-        });
-        return;
-      }
-      const uid: string = res.locals.uid;
-      await store.save(uid, body);
-      res.status(204).end();
-    },
-  );
+    );
 
-  app.get("/v1/me/settings-backup", authenticate, async (_req, res) => {
-    const uid: string = res.locals.uid;
-    const stored = await store.get(uid);
-    if (!stored) {
-      throw new HttpError(404, "NO_BACKUP", "No settings backup exists for this account.");
-    }
-    if (!validateBackup(stored.backup)) {
-      throw new Error("Stored backup failed schema validation.");
-    }
-    res.json(stored);
-  });
+    app.get(path, authenticate, async (_req, res) => {
+      const uid: string = res.locals.uid;
+      const stored = await store.get(uid);
+      if (!stored) {
+        throw new HttpError(404, "NO_BACKUP", "No settings backup exists for this account.");
+      }
+      if (!validateBackup(stored.backup)) {
+        throw new Error("Stored backup failed schema validation.");
+      }
+      if (stored.backup.schemaVersion !== version) {
+        throw new HttpError(
+          409,
+          "BACKUP_VERSION_MISMATCH",
+          `The latest backup uses schema version ${stored.backup.schemaVersion}; this endpoint requires version ${version}.`,
+        );
+      }
+      res.json(stored);
+    });
+  }
 
   app.use((_req, _res, next) => {
     next(new HttpError(404, "NOT_FOUND", "This API route does not exist."));

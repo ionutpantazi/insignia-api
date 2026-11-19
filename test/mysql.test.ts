@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { createDatabasePool } from "../src/config.js";
 import { MysqlBackupStore } from "../src/mysql-store.js";
-import { exampleBackup } from "./fixtures.js";
+import { exampleBackup, exampleBackupV2 } from "./fixtures.js";
 
 test("MySQL persists latest backups and isolates exact UID bytes across connections", {
   skip: process.env.MYSQL_INTEGRATION_TEST !== "true" && "Set MYSQL_INTEGRATION_TEST=true with a dedicated *_test database.",
@@ -29,12 +29,15 @@ test("MySQL persists latest backups and isolates exact UID bytes across connecti
     const stored = await second.get(uid);
     assert.deepEqual(stored?.backup, changed);
     assert.match(stored?.updatedAt ?? "", /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    const v2 = exampleBackupV2();
+    await first.save(uid, v2);
+    assert.deepEqual((await second.get(uid))?.backup, v2);
     for (const otherUid of uids.slice(1)) {
       assert.equal(await second.get(otherUid), null);
       await second.save(otherUid, initial);
       assert.deepEqual((await first.get(otherUid))?.backup, initial);
     }
-    assert.deepEqual((await second.get(uid))?.backup, changed);
+    assert.deepEqual((await second.get(uid))?.backup, v2);
   } finally {
     try {
       for (const ownUid of uids) {

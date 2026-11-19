@@ -1,6 +1,11 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { loadEnvFile } from "node:process";
 import { createPool } from "mysql2/promise";
 import { ConfigurationError } from "./errors.js";
+
+if (existsSync(".env")) {
+  loadEnvFile(".env");
+}
 
 export function requiredEnv(name: string): string {
   const value = process.env[name];
