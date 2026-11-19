@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { after, before, beforeEach, test } from "node:test";
+import sharp from "sharp";
 import { createApp } from "../src/app.js";
 import { type Backup, type BackupStore, type StoredBackup } from "../src/backup.js";
-import { exampleBackup, exampleBackupV2 } from "./fixtures.js";
+import { type ProfileStore, type ProfileWrite, profilePageSize } from "../src/profiles.js";
+import { exampleBackup, exampleBackupV2, exampleProfile } from "./fixtures.js";
 
 class MemoryStore implements BackupStore {
   readonly backups = new Map<string, StoredBackup>();
@@ -24,9 +26,34 @@ class MemoryStore implements BackupStore {
 }
 
 const store = new MemoryStore();
+const profileRows = new Map<string, Map<string, { payload: ProfileWrite; updatedAt: string }>>();
+const profiles: ProfileStore = {
+  async list(uid, after) {
+    return [...(profileRows.get(uid) ?? [])]
+      .filter(([id]) => id > after)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(0, profilePageSize + 1)
+      .map(([id, row]) => ({ id, name: row.payload.name, updatedAt: row.updatedAt }));
+  },
+  async get(uid, id) {
+    return profileRows.get(uid)?.get(id) ?? null;
+  },
+  async create(uid, id, payload, updatedAt) {
+    const rows = profileRows.get(uid) ?? new Map();
+    rows.set(id, { payload, updatedAt: updatedAt.toISOString() });
+    profileRows.set(uid, rows);
+  },
+  async overwrite(uid, id, payload, updatedAt) {
+    const rows = profileRows.get(uid);
+    if (!rows?.has(id)) return false;
+    rows.set(id, { payload, updatedAt: updatedAt.toISOString() });
+    return true;
+  },
+};
 const logs: unknown[][] = [];
 const app = createApp({
   store,
+  profiles,
   verifyIdToken: async (token) => {
     if (token === "user-a-token") return { uid: "user-a" };
     if (token === "user-b-token") return { uid: "user-b" };
@@ -55,6 +82,7 @@ after(async () => {
 
 beforeEach(() => {
   store.backups.clear();
+  profileRows.clear();
   store.fail = false;
   store.calls = 0;
   logs.length = 0;
@@ -463,4 +491,163 @@ test("v1 and v2 are never relabeled or converted and only an explicit valid PUT 
   assert.equal(reverseMismatch.status, 409);
   assert.equal((await reverseMismatch.json()).error.code, "BACKUP_VERSION_MISMATCH");
   assert.equal(store.backups.size, 1);
+});
+
+function profileRequest(method: "GET" | "POST" | "PUT", suffix = "", body?: unknown, token = "user-a-token") {
+  return fetch(baseUrl.replace("/v1/me/settings-backup", "/v3/me/settings-profiles") + suffix, {
+    method,
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+}
+
+async function createProfile(payload: ProfileWrite) {
+  const response = await profileRequest("POST", "", payload);
+  assert.equal(response.status, 201);
+  const summary = await response.json();
+  assert.equal(response.headers.get("location"), `/v3/me/settings-profiles/${summary.id}`);
+  assert.equal(summary.name, payload.name);
+  assert.equal(new Date(summary.updatedAt).toISOString(), summary.updatedAt);
+  return summary;
+}
+
+test("v3 creates two named snapshots, lists metadata only, and overwrites just the selected stable ID", async () => {
+  const first = exampleProfile();
+  const second = exampleProfile("Weekend");
+  const firstSummary = await createProfile(first);
+  const secondSummary = await createProfile(second);
+  assert.notEqual(firstSummary.id, secondSummary.id);
+  const list = await (await profileRequest("GET")).json();
+  assert.deepEqual(list, {
+    profiles: [firstSummary, secondSummary].sort((a, b) => a.id.localeCompare(b.id)),
+    nextCursor: null,
+  });
+  const firstPath = `/${firstSummary.id}`;
+  const secondPath = `/${secondSummary.id}`;
+  assert.deepEqual(await (await profileRequest("GET", firstPath)).json(), { ...first, ...firstSummary });
+  const edited = exampleProfile("Updated daily drive");
+  edited.settings.musicMode = "radio";
+  const overwritten = await profileRequest("PUT", firstPath, edited);
+  assert.equal(overwritten.status, 200);
+  const updated = await overwritten.json();
+  assert.deepEqual(updated, { id: firstSummary.id, name: edited.name, updatedAt: new Date(updated.updatedAt).toISOString() });
+  assert.deepEqual(await (await profileRequest("GET", firstPath)).json(), { ...edited, ...updated });
+  assert.deepEqual(await (await profileRequest("GET", secondPath)).json(), { ...second, ...secondSummary });
+});
+
+test("v3 scopes list, load, and overwrite to a verified UID; PUT never creates", async () => {
+  const summary = await createProfile(exampleProfile());
+  const path = `/${summary.id}?uid=user-a`;
+  for (const [method, suffix] of [["GET", ""], ["GET", path], ["POST", ""], ["PUT", path]] as const) {
+    const body = method === "GET" ? undefined : exampleProfile();
+    for (const token of ["", "invalid", "revoked"]) {
+      assert.equal((await profileRequest(method, suffix, body, token)).status, 401);
+    }
+  }
+  assert.deepEqual(await (await profileRequest("GET", "?uid=user-a", undefined, "user-b-token")).json(), {
+    profiles: [], nextCursor: null,
+  });
+  const missing = await profileRequest("GET", path, undefined, "user-b-token");
+  const denied = await profileRequest("PUT", path, exampleProfile("Wrong account"), "user-b-token");
+  assert.equal(missing.status, 404);
+  assert.equal(denied.status, 404);
+  assert.deepEqual(await denied.json(), await missing.json());
+  assert.equal((await (await profileRequest("GET", `/${summary.id}`)).json()).name, summary.name);
+});
+
+test("v3 list cursor advances without returning a snapshot or another account's data", async () => {
+  for (let index = 0; index < 51; index++) {
+    const id = `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`;
+    await profiles.create("user-a", id, exampleProfile(`Profile ${index}`), new Date(0));
+  }
+  const first = await (await profileRequest("GET")).json();
+  assert.equal(first.profiles.length, 50);
+  assert.equal(first.nextCursor, first.profiles[49].id);
+  const second = await (await profileRequest("GET", `?after=${first.nextCursor}`)).json();
+  assert.equal(second.profiles.length, 1);
+  assert.equal(second.profiles[0].name, "Profile 50");
+  assert.equal(second.nextCursor, null);
+  assert.equal((await profileRequest("GET", "?after=invalid")).status, 400);
+});
+
+test("v3 rejects incomplete snapshots, private fields, and invalid or credential-bearing settings", async () => {
+  const profile = exampleProfile();
+  const { settings } = profile;
+  for (const invalid of [
+    { ...profile, schemaVersion: 2 },
+    { ...profile, name: "\u0000" },
+    { ...profile, settings: { ...settings, clock: { style: "analog", sizePercent: 200.01 } } },
+    { ...profile, settings: { ...settings, positions: { ...settings.positions, music: { x: -1, y: 10 } } } },
+    { ...profile, settings: { ...settings, spotify: undefined } },
+    { ...profile, settings: { ...settings, radio: { ...settings.radio, width: 0 } } },
+    { ...profile, settings: { ...settings, spotify: { ...settings.spotify, clientSecret: "private" } } },
+    { ...profile, settings: { ...settings, spotify: { ...settings.spotify, playbackUri: "content://usb" } } },
+    { ...profile, settings: { ...settings, playbackState: "playing", shortcutAssignments: [] } },
+    { ...profile, settings: { ...settings, background: { type: "custom", uri: "content://wallpaper" } } },
+  ]) {
+    assert.equal((await profileRequest("POST", "", invalid)).status, 422);
+  }
+  for (const serverUrl of [
+    "https://user:pass@radio.example.com", "http://@radio.example.com",
+    "https://radio.example.com/?station=jazz&api%5Fkey=private",
+    "https://radio.example.com/?AuthToken=private", "https://radio.example.com/#fragment", "https:///radio",
+  ]) {
+    const response = await profileRequest("POST", "", { ...profile, settings: { ...settings, radio: { ...settings.radio, serverUrl } } });
+    assert.equal(response.status, 422);
+    assert.equal((await response.json()).error.code, "INVALID_RADIO_URL");
+  }
+  assert.deepEqual(await (await profileRequest("GET")).json(), { profiles: [], nextCursor: null });
+});
+
+test("custom wallpaper round-trips with its snapshot and invalid uploads cannot replace it", async () => {
+  const png = await sharp({ create: { width: 2, height: 1, channels: 3, background: "blue" } }).png().toBuffer();
+  const original = exampleProfile();
+  original.settings.background = { type: "custom", image: { mediaType: "image/png", dataBase64: png.toString("base64") } };
+  const created = await createProfile(original);
+  const path = `/${created.id}`;
+  const initial = await (await profileRequest("GET", path)).json();
+  const { image } = initial.settings.background;
+  assert.equal(image.mediaType, "image/png");
+  const pixels = await sharp(Buffer.from(image.dataBase64, "base64")).raw().toBuffer();
+  assert.deepEqual(pixels, Buffer.from([0, 0, 255, 0, 0, 255]));
+  assert.deepEqual(initial, {
+    ...original, ...created, settings: { ...original.settings, background: { type: "custom", image } },
+  });
+  const tooManyPixels = await sharp({ create: { width: 4001, height: 2000, channels: 3, background: "blue" } }).png().toBuffer();
+  for (const badImage of [
+    { mediaType: "image/png", dataBase64: "aaaa@" },
+    { mediaType: "image/jpeg", dataBase64: png.toString("base64") },
+    { mediaType: "image/png", dataBase64: png.subarray(0, 8).toString("base64") },
+    { mediaType: "image/png", dataBase64: tooManyPixels.toString("base64") },
+    { mediaType: "image/png", dataBase64: Buffer.alloc(2 * 1024 * 1024 + 1).toString("base64") },
+  ] as const) {
+    const edited = exampleProfile("Do not save");
+    edited.settings.background = { type: "custom", image: badImage };
+    const response = await profileRequest("PUT", path, edited);
+    assert.equal(response.status, 422);
+    assert.equal((await response.json()).error.code, "INVALID_WALLPAPER");
+  }
+  assert.equal((await profileRequest("PUT", path, { padding: "x".repeat(3 * 1024 * 1024) })).status, 413);
+  assert.equal((await profileRequest("PUT", path, { ...original, settings: { ...original.settings, background: { type: "custom" } } })).status, 422);
+  assert.deepEqual(await (await profileRequest("GET", path)).json(), initial);
+  const dark = exampleProfile();
+  assert.equal((await profileRequest("PUT", path, dark)).status, 200);
+  assert.deepEqual((await (await profileRequest("GET", path)).json()).settings.background, { type: "dark" });
+});
+
+test("v3 profiles and existing v1/v2 backups remain independent", async () => {
+  const v1 = exampleBackup();
+  assert.equal((await request("PUT", "user-a-token", v1)).status, 204);
+  assert.deepEqual(await (await profileRequest("GET")).json(), { profiles: [], nextCursor: null });
+  assert.equal((await profileRequest("POST", "", { ...v1, schemaVersion: 3 })).status, 422);
+  const profile = exampleProfile();
+  const summary = await createProfile(profile);
+  assert.deepEqual((await (await request("GET")).json()).backup, v1);
+  const v2 = exampleBackupV2();
+  assert.equal((await request("PUT", "user-a-token", v2, "", 2)).status, 204);
+  assert.deepEqual((await (await request("GET", "user-a-token", undefined, "", 2)).json()).backup, v2);
+  assert.deepEqual(await (await profileRequest("GET", `/${summary.id}`)).json(), { ...profile, ...summary });
 });

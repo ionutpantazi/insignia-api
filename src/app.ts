@@ -1,9 +1,12 @@
 import express, { type ErrorRequestHandler, type RequestHandler } from "express";
 import { type BackupStore, backupValidators, validateBackup } from "./backup.js";
 import { errorCode, errorSummary, HttpError } from "./errors.js";
+import { registerProfileRoutes } from "./profile-routes.js";
+import { type ProfileStore } from "./profiles.js";
 
 export interface AppDependencies {
   store: BackupStore;
+  profiles: ProfileStore;
   verifyIdToken(token: string): Promise<{ uid: string }>;
   logger: Pick<Console, "error">;
 }
@@ -17,7 +20,7 @@ const invalidCredentialCodes = new Set([
   "auth/user-not-found",
 ]);
 
-export function createApp({ store, verifyIdToken, logger }: AppDependencies) {
+export function createApp({ store, profiles, verifyIdToken, logger }: AppDependencies) {
   const app = express();
   app.disable("x-powered-by");
   app.disable("etag");
@@ -64,16 +67,7 @@ export function createApp({ store, verifyIdToken, logger }: AppDependencies) {
       path,
       authenticate,
       requireJson,
-      express.json({
-        limit: 16 * 1024,
-        strict: true,
-        inflate: false,
-        verify: (_req, _res, _body, encoding) => {
-          if (encoding !== "utf-8") {
-            throw new HttpError(415, "UNSUPPORTED_MEDIA_TYPE", "Use uncompressed UTF-8 JSON.");
-          }
-        },
-      }),
+      parseJson(16 * 1024),
       async (req, res) => {
         const body: unknown = req.body;
         if (!validate(body)) {
@@ -116,6 +110,8 @@ export function createApp({ store, verifyIdToken, logger }: AppDependencies) {
     });
   }
 
+  registerProfileRoutes(app, profiles, authenticate, requireJson, parseJson(3 * 1024 * 1024));
+
   app.use((_req, _res, next) => {
     next(new HttpError(404, "NOT_FOUND", "This API route does not exist."));
   });
@@ -124,8 +120,6 @@ export function createApp({ store, verifyIdToken, logger }: AppDependencies) {
     let responseError: HttpError;
     if (error instanceof HttpError) {
       responseError = error;
-    } else if (hasParserType(error, "entity.too.large")) {
-      responseError = new HttpError(413, "PAYLOAD_TOO_LARGE", "The request body must not exceed 16384 bytes.");
     } else if (hasParserType(error, "entity.parse.failed")) {
       responseError = new HttpError(400, "INVALID_JSON", "The request body must be valid JSON.");
     } else if (hasParserType(error, "charset.unsupported") || hasParserType(error, "encoding.unsupported")) {
@@ -147,6 +141,24 @@ export function createApp({ store, verifyIdToken, logger }: AppDependencies) {
   };
   app.use(handleError);
   return app;
+}
+
+function parseJson(limit: number): RequestHandler {
+  const parse = express.json({
+    limit,
+    strict: true,
+    inflate: false,
+    verify: (_req, _res, _body, encoding) => {
+      if (encoding !== "utf-8") {
+        throw new HttpError(415, "UNSUPPORTED_MEDIA_TYPE", "Use uncompressed UTF-8 JSON.");
+      }
+    },
+  });
+  return (req, res, next) => parse(req, res, (error?: unknown) => {
+    next(hasParserType(error, "entity.too.large")
+      ? new HttpError(413, "PAYLOAD_TOO_LARGE", `The request body must not exceed ${limit} bytes.`)
+      : error);
+  });
 }
 
 function hasParserType(error: unknown, type: string): boolean {

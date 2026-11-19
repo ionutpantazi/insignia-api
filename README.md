@@ -6,6 +6,10 @@ No Android source was accessed or changed.
 
 ## Contract
 
+For multiple named, complete Settings-page snapshots with portable wallpapers,
+see the [v3 profiles API](./PROFILES.md). The contract below describes the separate
+legacy v1/v2 single-backup resource; v3 does not read or migrate those backups.
+
 Public base URL: `https://backup.example.com` (replace with your own domain).
 Every operation requires HTTPS and `Authorization: Bearer <Firebase ID token>`.
 
@@ -321,8 +325,8 @@ are included. A separate Firebase-backed document database is **not** required.
    are still validated before startup.
 3. Create the MySQL database and dedicated accounts using an administrator.
    Run `npm run migrate` with a migration account authorized to CREATE the table;
-   the repeatable migration creates only `settings_backups`.
-   The runtime account needs only SELECT, INSERT and UPDATE on that table; no
+   the repeatable migrations create `settings_backups` and `settings_profiles`.
+   The runtime account needs only SELECT, INSERT and UPDATE on those tables; no
    administrative, DROP, CREATE or other application-table privileges.
 4. Run `npm run build`, then `npm start` under a supervised service.
    The server checks table accessibility before listening and binds to

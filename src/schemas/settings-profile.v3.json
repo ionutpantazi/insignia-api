@@ -1,0 +1,117 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Launcher settings profile write, version 3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "name", "settings"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 3 },
+    "name": { "type": "string", "minLength": 1, "maxLength": 80, "pattern": "^(?=[\\s\\S]*\\S)[^\\x00-\\x1f\\x7f]+(?![\\s\\S])" },
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["clock", "positions", "showShortcuts", "hideStatusBar", "useSteeringWheelButtons", "musicMode", "radio", "spotify", "background"],
+      "properties": {
+        "clock": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["style", "sizePercent"],
+          "properties": {
+            "style": { "enum": ["digital", "analog"] },
+            "sizePercent": { "type": "number", "minimum": 50, "maximum": 200 }
+          }
+        },
+        "positions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["clock", "shortcuts", "actions", "music"],
+          "properties": {
+            "clock": { "$ref": "#/definitions/position" },
+            "shortcuts": { "$ref": "#/definitions/position" },
+            "actions": { "$ref": "#/definitions/position" },
+            "music": { "$ref": "#/definitions/position" }
+          }
+        },
+        "showShortcuts": { "type": "boolean" },
+        "hideStatusBar": { "type": "boolean" },
+        "useSteeringWheelButtons": { "type": "boolean" },
+        "musicMode": { "enum": ["none", "local", "spotify", "radio"] },
+        "radio": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["serverUrl", "autoplay", "width", "height"],
+          "properties": {
+            "serverUrl": {
+              "description": "Null when unconfigured. Otherwise a credential-free HTTP(S) URL. Additional URL checks apply.",
+              "type": ["string", "null"],
+              "minLength": 1,
+              "maxLength": 2048,
+              "pattern": "^https?://"
+            },
+            "autoplay": { "type": "boolean" },
+            "width": { "$ref": "#/definitions/dimension" },
+            "height": { "$ref": "#/definitions/dimension" }
+          }
+        },
+        "spotify": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["clientId", "playbackUri", "autoConnect", "width", "height", "maxTitleLines"],
+          "properties": {
+            "clientId": { "type": ["string", "null"], "pattern": "^[a-fA-F0-9]{32}$" },
+            "playbackUri": { "type": ["string", "null"], "pattern": "^spotify:(track|album|artist|playlist|show|episode):[a-zA-Z0-9]{22}$" },
+            "autoConnect": { "type": "boolean" },
+            "width": { "$ref": "#/definitions/dimension" },
+            "height": { "$ref": "#/definitions/dimension" },
+            "maxTitleLines": { "type": "integer", "minimum": 1, "maximum": 2147483647 }
+          }
+        },
+        "background": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type"],
+              "properties": { "type": { "const": "dark" } }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type", "image"],
+              "properties": {
+                "type": { "const": "custom" },
+                "image": { "$ref": "#/definitions/image" }
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "definitions": {
+    "dimension": { "type": "integer", "minimum": 1, "maximum": 2147483647, "description": "Positive integer dp." },
+    "position": {
+      "anyOf": [
+        { "type": "null", "description": "Automatic placement." },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["x", "y"],
+          "properties": {
+            "x": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+            "y": { "type": "integer", "minimum": 0, "maximum": 2147483647 }
+          }
+        }
+      ]
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mediaType", "dataBase64"],
+      "properties": {
+        "mediaType": { "enum": ["image/png", "image/jpeg"] },
+        "dataBase64": { "type": "string", "minLength": 4, "maxLength": 2796204, "contentEncoding": "base64" }
+      }
+    }
+  }
+}

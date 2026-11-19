@@ -3,11 +3,13 @@ import { createDatabasePool } from "./config.js";
 import { errorSummary } from "./errors.js";
 
 async function main() {
-  const sql = await readFile(new URL("../migrations/001-settings-backups.sql", import.meta.url), "utf8");
   const pool = createDatabasePool();
   try {
-    await pool.query(sql);
-    console.log("Settings backup table is ready.");
+    for (const migration of ["001-settings-backups.sql", "002-settings-profiles.sql"]) {
+      const sql = await readFile(new URL(`../migrations/${migration}`, import.meta.url), "utf8");
+      await pool.query(sql);
+      console.log(`Applied ${migration}.`);
+    }
   } finally {
     await pool.end();
   }
